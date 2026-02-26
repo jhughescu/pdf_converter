@@ -2,8 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const pdfParse = require('pdf-parse');
 const http = require('http');
+const https = require('https');
 const { spawn } = require('child_process');
 const packageInfo = require('./package.json');
+const PACKAGE_NAME = packageInfo.name || 'pdf-converter';
 const APP_VERSION = packageInfo.version || 'dev';
 
 
@@ -19,6 +21,103 @@ let progressState = {
   completedFormats: {}
 };
 let progressClients = [];
+let updateCheckCache = {
+  currentVersion: APP_VERSION,
+  latestVersion: APP_VERSION,
+  updateAvailable: false,
+  checkedAt: 0,
+  error: null,
+};
+
+function compareSemver(v1, v2) {
+  const a = String(v1 || '0.0.0').split('.').map(n => parseInt(n, 10) || 0);
+  const b = String(v2 || '0.0.0').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    const av = a[i] || 0;
+    const bv = b[i] || 0;
+    if (av > bv) return 1;
+    if (av < bv) return -1;
+  }
+  return 0;
+}
+
+function fetchLatestPackageVersionFromNpm(packageName) {
+  return new Promise((resolve, reject) => {
+    const encoded = encodeURIComponent(packageName);
+    const url = `https://registry.npmjs.org/${encoded}/latest`;
+
+    https.get(url, response => {
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`Registry responded ${response.statusCode}`));
+        return;
+      }
+
+      let body = '';
+      response.on('data', chunk => {
+        body += chunk;
+      });
+      response.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          const latestVersion = parsed && parsed.version ? String(parsed.version) : null;
+          if (!latestVersion) {
+            reject(new Error('Latest version missing in registry response'));
+            return;
+          }
+          resolve(latestVersion);
+        } catch (err) {
+          reject(new Error(`Invalid registry response: ${err.message}`));
+        }
+      });
+    }).on('error', err => {
+      reject(err);
+    });
+  });
+}
+
+async function getUpdateStatus(force = false) {
+  const now = Date.now();
+  const ttlMs = 10 * 60 * 1000;
+
+  if (!force && now - updateCheckCache.checkedAt < ttlMs) {
+    return {
+      currentVersion: APP_VERSION,
+      latestVersion: updateCheckCache.latestVersion,
+      updateAvailable: updateCheckCache.updateAvailable,
+      checkedAt: updateCheckCache.checkedAt,
+      error: updateCheckCache.error,
+    };
+  }
+
+  try {
+    const latestVersion = await fetchLatestPackageVersionFromNpm(PACKAGE_NAME);
+    const updateAvailable = compareSemver(latestVersion, APP_VERSION) > 0;
+    updateCheckCache = {
+      currentVersion: APP_VERSION,
+      latestVersion,
+      updateAvailable,
+      checkedAt: now,
+      error: null,
+    };
+  } catch (err) {
+    updateCheckCache = {
+      ...updateCheckCache,
+      currentVersion: APP_VERSION,
+      checkedAt: now,
+      error: err.message,
+    };
+  }
+
+  return {
+    currentVersion: APP_VERSION,
+    latestVersion: updateCheckCache.latestVersion,
+    updateAvailable: updateCheckCache.updateAvailable,
+    checkedAt: updateCheckCache.checkedAt,
+    error: updateCheckCache.error,
+  };
+}
 
 /**
  * Reads and extracts text from a PDF file
@@ -3519,17 +3618,66 @@ function generateDashboardHTML(inputFiles, processing) {
       margin-bottom: 20px;
       color: #c9d1d9;
     }
+    .update-banner {
+      display: none;
+      background: #11233d;
+      border: 1px solid #2f6fb5;
+      color: #cfe8ff;
+      padding: 12px;
+      margin-bottom: 18px;
+      font-size: 0.9em;
+      line-height: 1.4;
+    }
+    .update-banner.show {
+      display: block;
+    }
+    .update-banner code {
+      color: #9bd0ff;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
     .app-version {
       color: #8b949e;
       font-size: 0.85em;
       margin: -18px 0 20px 0;
+    }
+    .app-version-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: -18px 0 20px 0;
+    }
+    .app-version-row .app-version {
+      margin: 0;
+    }
+    .check-updates-btn {
+      background: #21262d;
+      color: #58a6ff;
+      border: 1px solid #30363d;
+      padding: 6px 10px;
+      font-size: 0.8em;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .check-updates-btn:hover:not(:disabled) {
+      background: #30363d;
+      border-color: #58a6ff;
+    }
+    .check-updates-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>PDF Converter Dashboard</h1>
-    <div class="app-version">Version v${APP_VERSION}</div>
+    <div class="app-version-row">
+      <div class="app-version">Version v${APP_VERSION}</div>
+      <button id="checkUpdatesBtn" class="check-updates-btn" type="button">Check updates</button>
+    </div>
+    <div id="updateBanner" class="update-banner" role="status" aria-live="polite"></div>
     
     <div class="section">
       <h2>Input Files</h2>
@@ -3605,6 +3753,40 @@ function generateDashboardHTML(inputFiles, processing) {
   
   <script>
     let progressEventSource = null;
+
+    function checkForUpdate(force = false) {
+      const button = document.getElementById('checkUpdatesBtn');
+      if (button && force) {
+        button.disabled = true;
+        button.textContent = 'Checking...';
+      }
+
+      fetch('/api/update-check' + (force ? '?force=1' : ''))
+        .then(r => r.json())
+        .then(data => {
+          const banner = document.getElementById('updateBanner');
+          if (!banner) return;
+
+          if (!data || !data.success || !data.updateAvailable) return;
+          banner.innerHTML = 'Update available: <code>v' + data.latestVersion + '</code> (current: <code>v' + data.currentVersion + '</code>). ' +
+            'Run <code>npm install -g @j.hughes.cu/pdf-converter@latest</code> to update.';
+          banner.classList.add('show');
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (button) {
+            button.disabled = false;
+            button.textContent = 'Check updates';
+          }
+        });
+    }
+
+    const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.addEventListener('click', function() {
+        checkForUpdate(true);
+      });
+    }
     
     function saveCheckboxStates() {
       const formatStates = {
@@ -3918,6 +4100,7 @@ function generateDashboardHTML(inputFiles, processing) {
     }
 
     initFileSelection();
+    checkForUpdate();
   </script>
 </body>
 </html>`;
@@ -4095,6 +4278,51 @@ function generateMenuHTML(outputBaseDir) {
       font-size: 0.85em;
       margin: -10px 0 20px 0;
     }
+    .app-version-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: -10px 0 20px 0;
+    }
+    .app-version-row .app-version {
+      margin: 0;
+    }
+    .check-updates-btn {
+      background: #21262d;
+      color: #58a6ff;
+      border: 1px solid #30363d;
+      padding: 6px 10px;
+      font-size: 0.8em;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .check-updates-btn:hover:not(:disabled) {
+      background: #30363d;
+      border-color: #58a6ff;
+    }
+    .check-updates-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .update-banner {
+      display: none;
+      background: #11233d;
+      border: 1px solid #2f6fb5;
+      color: #cfe8ff;
+      padding: 12px;
+      margin-bottom: 18px;
+      font-size: 0.9em;
+      line-height: 1.4;
+    }
+    .update-banner.show {
+      display: block;
+    }
+    .update-banner code {
+      color: #9bd0ff;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
     .file-key {
       background: #161b22;
       border: 1px solid #30363d;
@@ -4137,7 +4365,11 @@ function generateMenuHTML(outputBaseDir) {
       You must add one or more PDF files to <code>input/</code> to continue processing new documents.
     </div>` : ''}
     <h1>PDF Converter Output</h1>
-    <div class="app-version">Version v${APP_VERSION}</div>
+    <div class="app-version-row">
+      <div class="app-version">Version v${APP_VERSION}</div>
+      <button id="checkUpdatesBtn" class="check-updates-btn" type="button">Check updates</button>
+    </div>
+    <div id="updateBanner" class="update-banner" role="status" aria-live="polite"></div>
     <div class="file-key">
       <h2>File Types</h2>
       <dl>
@@ -4175,6 +4407,40 @@ function generateMenuHTML(outputBaseDir) {
   </div>
   
   <script>
+    function checkForUpdate(force = false) {
+      const button = document.getElementById('checkUpdatesBtn');
+      if (button && force) {
+        button.disabled = true;
+        button.textContent = 'Checking...';
+      }
+
+      fetch('/api/update-check' + (force ? '?force=1' : ''))
+        .then(r => r.json())
+        .then(data => {
+          const banner = document.getElementById('updateBanner');
+          if (!banner) return;
+
+          if (!data || !data.success || !data.updateAvailable) return;
+          banner.innerHTML = 'Update available: <code>v' + data.latestVersion + '</code> (current: <code>v' + data.currentVersion + '</code>). ' +
+            'Run <code>npm install -g @j.hughes.cu/pdf-converter@latest</code> to update.';
+          banner.classList.add('show');
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (button) {
+            button.disabled = false;
+            button.textContent = 'Check updates';
+          }
+        });
+    }
+
+    const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.addEventListener('click', function() {
+        checkForUpdate(true);
+      });
+    }
+
     async function copyCanvasHTML(event, url) {
       const button = event.target;
       try {
@@ -4197,6 +4463,8 @@ function generateMenuHTML(outputBaseDir) {
         }, 2000);
       }
     }
+
+    checkForUpdate();
   </script>
 </body>
 </html>`;
@@ -4455,6 +4723,34 @@ function startServer(outputBaseDir, port = 3000) {
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ processedFiles }));
+      return;
+    }
+
+    if (req.url.startsWith('/api/update-check')) {
+      const force = /(?:\?|&)force=1(?:&|$)/.test(req.url);
+      getUpdateStatus(force)
+        .then(status => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            currentVersion: status.currentVersion,
+            latestVersion: status.latestVersion,
+            updateAvailable: status.updateAvailable,
+            checkedAt: status.checkedAt,
+            error: status.error,
+          }));
+        })
+        .catch(err => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            currentVersion: APP_VERSION,
+            latestVersion: APP_VERSION,
+            updateAvailable: false,
+            checkedAt: Date.now(),
+            error: err.message,
+          }));
+        });
       return;
     }
 
