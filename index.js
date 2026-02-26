@@ -3,6 +3,8 @@ const path = require('path');
 const pdfParse = require('pdf-parse');
 const http = require('http');
 const { spawn } = require('child_process');
+const packageInfo = require('./package.json');
+const APP_VERSION = packageInfo.version || 'dev';
 
 
 // Global state
@@ -3517,11 +3519,17 @@ function generateDashboardHTML(inputFiles, processing) {
       margin-bottom: 20px;
       color: #c9d1d9;
     }
+    .app-version {
+      color: #8b949e;
+      font-size: 0.85em;
+      margin: -18px 0 20px 0;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>PDF Converter Dashboard</h1>
+    <div class="app-version">Version v${APP_VERSION}</div>
     
     <div class="section">
       <h2>Input Files</h2>
@@ -3922,6 +3930,10 @@ function generateDashboardHTML(inputFiles, processing) {
  */
 function generateMenuHTML(outputBaseDir) {
   const menuItems = [];
+  const inputDir = './input';
+  const inputFiles = fs.existsSync(inputDir)
+    ? fs.readdirSync(inputDir).filter(f => f.toLowerCase().endsWith('.pdf'))
+    : [];
   
   if (fs.existsSync(outputBaseDir)) {
     const subdirs = fs.readdirSync(outputBaseDir).filter(item => {
@@ -4065,6 +4077,24 @@ function generateMenuHTML(outputBaseDir) {
       margin-bottom: 20px;
       font-size: 0.9em;
     }
+    .input-empty-warning {
+      background: #2b1a1a;
+      border: 1px solid #a04040;
+      color: #ffd7d7;
+      padding: 14px;
+      margin-bottom: 20px;
+      font-size: 0.92em;
+      line-height: 1.5;
+    }
+    .input-empty-warning code {
+      color: #ffb3b3;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+    .app-version {
+      color: #8b949e;
+      font-size: 0.85em;
+      margin: -10px 0 20px 0;
+    }
     .file-key {
       background: #161b22;
       border: 1px solid #30363d;
@@ -4101,7 +4131,13 @@ function generateMenuHTML(outputBaseDir) {
     <div class="server-info">
       Output Directory: ./output | Server: http://localhost:3000
     </div>
+    ${inputFiles.length === 0 ? `
+    <div class="input-empty-warning">
+      <strong>No files were found in <code>input/</code>.</strong><br>
+      You must add one or more PDF files to <code>input/</code> to continue processing new documents.
+    </div>` : ''}
     <h1>PDF Converter Output</h1>
+    <div class="app-version">Version v${APP_VERSION}</div>
     <div class="file-key">
       <h2>File Types</h2>
       <dl>
