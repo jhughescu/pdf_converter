@@ -1,0 +1,44 @@
+{
+  "name": "@j.hughes.cu/pdf-converter",
+  "version": "1.1.0",
+  "description": "Interactive PDF conversion dashboard with HTML editing, highlights, history, and export formats",
+  "main": "index.js",
+  "bin": {
+    "pdf-converter": "bin/pdf-converter.js"
+  },
+  "files": [
+    "bin/",
+    "index.js",
+    "dashboard_new.html",
+    "templates/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "pack:check": "npm pack --dry-run",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "pdf",
+    "parser",
+    "converter",
+    "dashboard",
+    "html",
+    "editor"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.88",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^5.4.624"
+  }
+}

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Converter Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #58a6ff;
+      margin-bottom: 30px;
+      font-size: 1.5em;
+      font-weight: normal;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 10px;
+    }
+    .section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .section h2 {
+      color: #58a6ff;
+      font-size: 1.1em;
+      font-weight: normal;
+      margin-bottom: 15px;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 8px;
+    }
+    .file-list {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      padding: 15px;
+      max-height: 250px;
+      overflow-y: auto;
+      margin-bottom: 15px;
+    }
+    .file-item {
+      padding: 8px 0;
+      color: #8b949e;
+      border-bottom: 1px solid #21262d;
+    }
+    .file-item:last-child {
+      border-bottom: none;
+    }
+    .file-item::before {
+      content: "📄 ";
+      margin-right: 6px;
+    }
+    .no-files {
+      color: #8b949e;
+      font-style: italic;
+      padding: 10px 0;
+    }
+    button {
+      padding: 12px 20px;
+      background: #21262d;
+      color: #58a6ff;
+      border: 1px solid #30363d;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.95em;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+    button:hover:not(:disabled) {
+      background: #30363d;
+      border-color: #58a6ff;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: #1f6feb;
+      color: white;
+      border-color: #1f6feb;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #388bfd;
+      border-color: #388bfd;
+    }
+    .btn-danger {
+      background: #da3633;
+      color: white;
+      border-color: #da3633;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: #f85149;
+      border-color: #f85149;
+    }
+    .description {
+      color: #8b949e;
+      line-height: 1.6;
+      margin-bottom: 15px;
+      font-size: 0.9em;
+    }
+    .status-message {
+      background: #161b22;
+      border-left: 3px solid #58a6ff;
+      padding: 15px;
+      margin-bottom: 20px;
+      color: #c9d1d9;
+    }
+    .status-message.success {
+      border-left-color: #3fb950;
+      color: #3fb950;
+    }
+    .progress-bar {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      height: 30px;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .progress-fill {
+      background: linear-gradient(90deg, #1f6feb, #388bfd);
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 0.85em;
+      font-weight: bold;
+      transition: width 0.3s ease;
+    }
+    .current-file {
+      color: #8b949e;
+      padding: 10px 0;
+      font-size: 0.9em;
+    }
+    .current-file .name {
+      color: #58a6ff;
+      font-weight: bold;
+    }
+    .format-options {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      padding: 15px;
+      margin-bottom: 15px;
+      border-radius: 4px;
+    }
+    .format-options h3 {
+      color: #58a6ff;
+      font-size: 0.95em;
+      margin-bottom: 12px;
+      font-weight: normal;
+    }
+    .format-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 15px;
+    }
+    .format-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .format-checkbox input {
+      cursor: pointer;
+      width: 18px;
+      height: 18px;
+      accent-color: #58a6ff;
+    }
+    .format-checkbox label {
+      cursor: pointer;
+      color: #8b949e;
+      user-select: none;
+      font-size: 0.9em;
+    }
+    .error-list, .processed-list {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      padding: 15px;
+      margin-bottom: 15px;
+      max-height: 200px;
+      overflow-y: auto;
+      border-radius: 4px;
+    }
+    .error-item, .processed-item {
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 0.9em;
+    }
+    .error-item:last-child, .processed-item:last-child {
+      border-bottom: none;
+    }
+    .error-item {
+      color: #f85149;
+    }
+    .error-item::before {
+      content: "✗ ";
+      margin-right: 6px;
+    }
+    .processed-item {
+      color: #3fb950;
+    }
+    .processed-item::before {
+      content: "✓ ";
+      margin-right: 6px;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PDF Converter Dashboard</h1>
+    
+    <div class="section">
+      <h2>Input Files</h2>
+      <p class="description">PDFs ready to be converted from your input folder.</p>
+      <div class="file-list" id="inputFilesList"></div>
+      <button onclick="location.reload()">Refresh List</button>
+    </div>
+    
+    <div class="section">
+      <h2>Output Formats</h2>
+      <p class="description">Select which formats to generate for your PDFs.</p>
+      <div class="format-options" id="formatOptions">
+        <h3>Export Formats</h3>
+        <div class="format-grid">
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-html" checked>
+            <label for="fmt-html">Interactive HTML</label>
+          </div>
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-canvas" checked>
+            <label for="fmt-canvas">Canvas HTML</label>
+          </div>
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-text" checked>
+            <label for="fmt-text">Plain Text</label>
+          </div>
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-edited" checked>
+            <label for="fmt-edited">Edited Text</label>
+          </div>
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-csv" checked>
+            <label for="fmt-csv">CSV Metadata</label>
+          </div>
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-h5p" checked>
+            <label for="fmt-h5p">H5P JSON</label>
+          </div>
+          <div class="format-checkbox">
+            <input type="checkbox" id="fmt-images" checked>
+            <label for="fmt-images">Page Images</label>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="section hidden" id="processingSection">
+      <h2>Processing Status</h2>
+      <div id="progressStatus" class="status-message"></div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+      </div>
+      <div class="current-file" id="currentFile"></div>
+      
+      <div class="processed-list hidden" id="processedList">
+        <h3 style="color: #3fb950; margin-bottom: 10px; font-size: 0.9em;">✓ Processed Successfully</h3>
+        <div id="processedItems"></div>
+      </div>
+      
+      <div class="error-list hidden" id="errorList">
+        <h3 style="color: #f85149; margin-bottom: 10px; font-size: 0.9em;">✗ Errors</h3>
+        <div id="errorItems"></div>
+      </div>
+      
+      <button class="btn-danger" onclick="cancelProcessing()" id="cancelBtn" style="width: 100%; margin-top: 15px;">Cancel Processing</button>
+    </div>
+    
+    <div class="section">
+      <h2>Start Processing</h2>
+      <p class="description">Click to begin converting your PDFs. This may take a few moments depending on file size and number of formats selected.</p>
+      <button class="btn-primary" onclick="startProcessing()" id="startBtn" style="width: 100%; padding: 15px;">Start Processing</button>
+    </div>
+  </div>
+  
+  <script>
+    const SSE_RECONNECT_INTERVAL = 5000;
+    let eventSource = null;
+    let fileCount = 0;
+    
+    // Populate file list on load
+    window.addEventListener('load', () => {
+      fetch('/api/list-inputs')
+        .then(r => r.json())
+        .then(data => {
+          fileCount = data.files ? data.files.length : 0;
+          const list = document.getElementById('inputFilesList');
+          if (fileCount === 0) {
+            list.innerHTML = '<div class="no-files">No PDFs found in input/ folder</div>';
+            document.getElementById('startBtn').disabled = true;
+          } else {
+            list.innerHTML = data.files.map(f => `<div class="file-item">${f}</div>`).join('');
+          }
+        });
+    });
+    
+    async function startProcessing() {
+      if (!confirm('Start processing ' + fileCount + ' PDF(s)?')) return;
+      
+      const formats = {
+        html: document.getElementById('fmt-html').checked,
+        canvas: document.getElementById('fmt-canvas').checked,
+        text: document.getElementById('fmt-text').checked,
+        editedText: document.getElementById('fmt-edited').checked,
+        csv: document.getElementById('fmt-csv').checked,
+        h5p: document.getElementById('fmt-h5p').checked,
+        images: document.getElementById('fmt-images').checked
+      };
+      
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('formatOptions').style.opacity = '0.5';
+      document.getElementById('formatOptions').style.pointerEvents = 'none';
+      document.getElementById('processingSection').classList.remove('hidden');
+      document.getElementById('progressStatus').textContent = '⏳ Starting...';
+      
+      try {
+        const response = await fetch('/api/start-processing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ formats })
+        });
+        
+        if (!response.ok) throw new Error('Failed to start processing');
+        connectProgressStream();
+      } catch (err) {
+        alert('Error: ' + err.message);
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('formatOptions').style.opacity = '1';
+        document.getElementById('formatOptions').style.pointerEvents = 'auto';
+        document.getElementById('processingSection').classList.add('hidden');
+      }
+    }
+    
+    function connectProgressStream() {
+      eventSource = new EventSource('/api/progress');
+      eventSource.onmessage = (event) => {
+        const progress = JSON.parse(event.data);
+        updateProgress(progress);
+      };
+      eventSource.onerror = () => {
+        if (eventSource.readyState === EventSource.CLOSED) return;
+        eventSource.close();
+        setTimeout(connectProgressStream, SSE_RECONNECT_INTERVAL);
+      };
+    }
+    
+    function updateProgress(progress) {
+      if (!progress) return;
+      
+      const percent = progress.totalFiles > 0 ? (progress.fileIndex / progress.totalFiles * 100) : 0;
+      const fill = document.getElementById('progressFill');
+      fill.style.width = percent + '%';
+      fill.textContent = progress.fileIndex + ' / ' + progress.totalFiles;
+      
+      const statusEl = document.getElementById('progressStatus');
+      if (progress.currentFile) {
+        statusEl.textContent = '⏳ Processing...';
+        statusEl.className = 'status-message';
+      } else {
+        statusEl.textContent = '✓ Processing complete!';
+        statusEl.className = 'status-message success';
+        document.getElementById('cancelBtn').disabled = true;
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('formatOptions').style.opacity = '1';
+        document.getElementById('formatOptions').style.pointerEvents = 'auto';
+        if (eventSource) eventSource.close();
+        setTimeout(() => { location.href = '/'; }, 2000);
+      }
+      
+      const currentEl = document.getElementById('currentFile');
+      if (progress.currentFile) {
+        currentEl.textContent = 'Current: ' + progress.currentFile;
+      }
+      
+      const processedEl = document.getElementById('processedList');
+      const processedItemsEl = document.getElementById('processedItems');
+      if (progress.processedFiles && progress.processedFiles.length > 0) {
+        processedEl.classList.remove('hidden');
+        processedItemsEl.innerHTML = progress.processedFiles.map(f => 
+          `<div class="processed-item">${f}</div>`
+        ).join('');
+      }
+      
+      const errorEl = document.getElementById('errorList');
+      const errorItemsEl = document.getElementById('errorItems');
+      if (progress.errors && progress.errors.length > 0) {
+        errorEl.classList.remove('hidden');
+        errorItemsEl.innerHTML = progress.errors.map(e => 
+          `<div class="error-item">${e}</div>`
+        ).join('');
+      }
+    }
+    
+    async function cancelProcessing() {
+      if (!confirm('Cancel processing?')) return;
+      try {
+        await fetch('/api/cancel', { method: 'POST' });
+        document.getElementById('cancelBtn').disabled = true;
+        document.getElementById('cancelBtn').textContent = 'Cancelling...';
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+  </script>
+</body>
+</html>
