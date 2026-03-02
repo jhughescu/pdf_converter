@@ -39,6 +39,18 @@ Put input PDFs in:
 Generated files appear in:
 - `output/<pdf-name>/`
 
+## First Run (Empty `input/` + `output/`)
+
+If both folders are empty, the app now shows an introduction page at startup.
+
+Use this quick flow:
+1. Add one or more PDF files to `input/`
+2. Refresh `http://localhost:3000`
+3. In the dashboard, choose output formats and click **Start Processing**
+4. Open generated files from the output menu
+
+The intro page is only shown when there are no input PDFs and no converted output folders yet.
+
 ## Publish to npm
 
 1. Verify account/session:

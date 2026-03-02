@@ -4,6 +4,7 @@ const pdfParse = require('pdf-parse');
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
+const Busboy = require('busboy');
 const packageInfo = require('./package.json');
 const PACKAGE_NAME = packageInfo.name || 'pdf-converter';
 const APP_VERSION = packageInfo.version || 'dev';
@@ -306,10 +307,44 @@ async function extractTextWithMetadata(fileBuffer, numPages) {
  * Returns text with HTML markup for super/subscript elements
  * MORE AGGRESSIVE detection with multiple heuristics
  * @param {Array} textItems - Text items with positioning metadata
+ * @param {Object} options - Detection options
  * @returns {string} Text with <sup> and <sub> tags
  */
-function markupSuperSubscript(textItems) {
+function resolveSuperSubStrength(rawValue) {
+  if (Number.isInteger(rawValue)) {
+    return Math.max(1, Math.min(10, rawValue));
+  }
+
+  const value = String(rawValue || '5').toLowerCase().trim();
+  if (value === 'default') return 5;
+  if (value === 'conservative') return 3;
+  if (value === 'aggressive') return 8;
+
+  const parsed = parseInt(value, 10);
+  if (Number.isInteger(parsed)) {
+    return Math.max(1, Math.min(10, parsed));
+  }
+
+  return 5;
+}
+
+function getSuperSubThresholds(strength) {
+  const t = (strength - 1) / 9;
+  const lerp = (min, max) => min + (max - min) * t;
+
+  return {
+    maxSizeFactor: lerp(0.55, 0.92),
+    minShift: lerp(1.4, 0.25),
+    sameSizeShift: lerp(4.0, 1.2),
+    veryShifted: lerp(4.5, 1.8),
+  };
+}
+
+function markupSuperSubscript(textItems, options = {}) {
   if (textItems.length === 0) return '';
+  const strength = resolveSuperSubStrength(options.strength ?? options.sensitivity);
+  const thresholds = getSuperSubThresholds(strength);
+  const allowSubscriptDetection = strength > 1;
 
   let result = '';
   let superCount = 0;
@@ -371,15 +406,15 @@ function markupSuperSubscript(textItems) {
     const positionDiff = item.y - effectiveBaselineY; // Signed difference to detect direction
     const absDiff = Math.abs(positionDiff);
     const sizeFactor = item.height / effectiveBaselineFontSize;
-    const isSmaller = sizeFactor < 0.85; // Tightened: 85% instead of 90%
+    const isSmaller = sizeFactor < thresholds.maxSizeFactor;
     const isNumeric = /^[0-9-]+$/.test(item.text);
     const isSymbol = /^[+\-]$/.test(item.text);
 
     // Detect super/subscript based on size and/or position
     // 1) Must be significantly smaller (< 85%) AND shifted
     // 2) Numeric/symbol with larger shift, even if font size matches baseline
-    const isShifted = absDiff > 0.5; // Tightened: 0.5px instead of 0.3px
-    const isSameSizeShifted = absDiff > 2.0 && (isNumeric || isSymbol); // Tightened: 2.0px instead of 1.2px
+    const isShifted = absDiff > thresholds.minShift;
+    const isSameSizeShifted = absDiff > thresholds.sameSizeShift && (isNumeric || isSymbol);
     
     // Don't mark very long text runs (> 30 chars) as super/subscript
     // These are likely regular paragraphs, not actual markup
@@ -388,7 +423,7 @@ function markupSuperSubscript(textItems) {
     // Don't mark regular words as super/subscript unless they're very clearly shifted
     // Allow single letters, numbers, symbols, but filter out dictionary words
     const isWord = /^[a-zA-Z]{3,}$/.test(item.text);
-    const isVeryShifted = absDiff > 2.5;
+    const isVeryShifted = absDiff > thresholds.veryShifted;
     
     const isSuperSubscript = ((isSmaller && isShifted) || isSameSizeShifted) && !(isWord && !isVeryShifted);
 
@@ -400,8 +435,12 @@ function markupSuperSubscript(textItems) {
         superCount += 1;
       } else {
         // Negative diff: character is lower in document (standard coords: subscript)
-        result += '<sub>' + item.text + '</sub>';
-        subCount += 1;
+        if (allowSubscriptDetection) {
+          result += '<sub>' + item.text + '</sub>';
+          subCount += 1;
+        } else {
+          result += item.text;
+        }
       }
     } else {
       result += item.text;
@@ -652,39 +691,43 @@ function exportToText(pdfData, outputPath) {
  * @param {string} html - HTML content
  * @returns {string} HTML with super/subscript markup
  */
-function applySuperSubscriptMarkup(html) {
+function applySuperSubscriptMarkup(html, options = {}) {
+  const strength = resolveSuperSubStrength(options.strength ?? options.sensitivity);
+  const allowSubscriptDetection = strength > 1;
   let result = html;
 
   const normalizeExponentToken = (raw) => {
     return String(raw).replace(/[lI]/g, '1');
   };
   
-  // SUBSCRIPT PATTERNS - Basic chemical formulas
-  result = result.replace(/H2O/gi, 'H<sub>2</sub>O');
-  result = result.replace(/H3O/gi, 'H<sub>3</sub>O');
-  result = result.replace(/CO2/gi, 'CO<sub>2</sub>');
-  result = result.replace(/CO3/gi, 'CO<sub>3</sub>');
-  result = result.replace(/N2O/gi, 'N<sub>2</sub>O');
-  result = result.replace(/NO2/gi, 'NO<sub>2</sub>');
-  result = result.replace(/NO3/gi, 'NO<sub>3</sub>');
-  result = result.replace(/SO2/gi, 'SO<sub>2</sub>');
-  result = result.replace(/SO3/gi, 'SO<sub>3</sub>');
-  result = result.replace(/SO4/gi, 'SO<sub>4</sub>');
-  result = result.replace(/CH4/gi, 'CH<sub>4</sub>');
-  result = result.replace(/O2/gi, 'O<sub>2</sub>');
-  result = result.replace(/N2/gi, 'N<sub>2</sub>');
-  
-  // Unicode subscript digits (if present in text)
-  result = result.replace(/([a-zA-Z])([₀-₉]+)/g, '$1<sub>$2</sub>');
-  
-  // Generic pattern: Letter followed by one or two digits (not in tags)
-  // e.g., "PH2" -> "PH<sub>2</sub>" but avoid if already in a tag
-  result = result.replace(/([A-Z][a-z]?)([0-9]{1,2})(?=[^0-9<]|$)/g, function(match, letters, nums) {
-    // Don't process if already in a tag
-    const beforeContext = result.substring(Math.max(0, result.indexOf(match) - 10), result.indexOf(match));
-    if (beforeContext.includes('<')) return match;
-    return letters + '<sub>' + nums + '</sub>';
-  });
+  if (allowSubscriptDetection) {
+    // SUBSCRIPT PATTERNS - Basic chemical formulas
+    result = result.replace(/H2O/gi, 'H<sub>2</sub>O');
+    result = result.replace(/H3O/gi, 'H<sub>3</sub>O');
+    result = result.replace(/CO2/gi, 'CO<sub>2</sub>');
+    result = result.replace(/CO3/gi, 'CO<sub>3</sub>');
+    result = result.replace(/N2O/gi, 'N<sub>2</sub>O');
+    result = result.replace(/NO2/gi, 'NO<sub>2</sub>');
+    result = result.replace(/NO3/gi, 'NO<sub>3</sub>');
+    result = result.replace(/SO2/gi, 'SO<sub>2</sub>');
+    result = result.replace(/SO3/gi, 'SO<sub>3</sub>');
+    result = result.replace(/SO4/gi, 'SO<sub>4</sub>');
+    result = result.replace(/CH4/gi, 'CH<sub>4</sub>');
+    result = result.replace(/O2/gi, 'O<sub>2</sub>');
+    result = result.replace(/N2/gi, 'N<sub>2</sub>');
+
+    // Unicode subscript digits (if present in text)
+    result = result.replace(/([a-zA-Z])([₀-₉]+)/g, '$1<sub>$2</sub>');
+
+    // Generic pattern: Letter followed by one or two digits (not in tags)
+    // e.g., "PH2" -> "PH<sub>2</sub>" but avoid if already in a tag
+    result = result.replace(/([A-Z][a-z]?)([0-9]{1,2})(?=[^0-9<]|$)/g, function(match, letters, nums) {
+      // Don't process if already in a tag
+      const beforeContext = result.substring(Math.max(0, result.indexOf(match) - 10), result.indexOf(match));
+      if (beforeContext.includes('<')) return match;
+      return letters + '<sub>' + nums + '</sub>';
+    });
+  }
   
   // SUPERSCRIPT PATTERNS - Mathematical and ordinals
   
@@ -698,8 +741,10 @@ function applySuperSubscriptMarkup(html) {
   // Powers: 10^x, 2^x, 3^x, etc.
   result = result.replace(/([0-9]+)\^([0-9]+)/g, '$1<sup>$2</sup>');
   
-  // Ordinal numbers: 1st, 2nd, 3rd, 21st, etc.
-  result = result.replace(/([0-9]+)(st|nd|rd|th)\b/gi, '$1<sup>$2</sup>');
+  if (strength >= 4) {
+    // Ordinal numbers: 1st, 2nd, 3rd, 21st, etc.
+    result = result.replace(/([0-9]+)(st|nd|rd|th)\b/gi, '$1<sup>$2</sup>');
+  }
 
   // Unit exponents with spaced negative powers (e.g., cm -3, s -1, mol -1)
   // Handles unicode minus and flexible spacing before punctuation
@@ -712,12 +757,16 @@ function applySuperSubscriptMarkup(html) {
   // Handle compact mass-density OCR forms like "gm -3" -> "g m<sup>-3</sup>"
   result = result.replace(/\bgm\b\s*[-−–]\s*([0-9lI]+)(?=\b|[^0-9])/g, (_m, exp) => `g m<sup>-${normalizeExponentToken(exp)}</sup>`);
 
-  // Fix spaced chemical formulas that often appear after PDF extraction, e.g. "NH 4", "H 2 O", "ClO 4"
-  result = result.replace(/\b(NH|ClO|CO|SO|NO|CH|H|O|N)\s+([0-9]{1,2})(?=\b|\s|\))/g, '$1<sub>$2</sub>');
+  if (allowSubscriptDetection) {
+    // Fix spaced chemical formulas that often appear after PDF extraction, e.g. "NH 4", "H 2 O", "ClO 4"
+    result = result.replace(/\b(NH|ClO|CO|SO|NO|CH|H|O|N)\s+([0-9]{1,2})(?=\b|\s|\))/g, '$1<sub>$2</sub>');
+  }
   
-  // Footnote/reference markers: (1), (2), [1], [2], etc.
-  result = result.replace(/\(([0-9]{1,3})\)(?=[\s,;:]|$)/g, '<sup>($1)</sup>');
-  result = result.replace(/\[([0-9]{1,3})\]/g, '<sup>[$1]</sup>');
+  if (strength >= 8) {
+    // Footnote/reference markers: (1), (2), [1], [2], etc.
+    result = result.replace(/\(([0-9]{1,3})\)(?=[\s,;:]|$)/g, '<sup>($1)</sup>');
+    result = result.replace(/\[([0-9]{1,3})\]/g, '<sup>[$1]</sup>');
+  }
   
   return result;
 }
@@ -1437,7 +1486,9 @@ function exportToHTML(pdfData, outputPath, outputDir, options = {}) {
         const value = (item.text || '').trim();
         return value.length > 0 && !/^Page-\d+$/i.test(value);
       });
-      const positionBasedMarkup = markupSuperSubscript(filteredMetadata);
+      const positionBasedMarkup = markupSuperSubscript(filteredMetadata, {
+        strength: options.superSubSensitivity,
+      });
       if (positionBasedMarkup && positionBasedMarkup.length > 0) {
         textForHTML = mergeMarkupIntoText(transformedText, positionBasedMarkup);
       }
@@ -1445,7 +1496,9 @@ function exportToHTML(pdfData, outputPath, outputDir, options = {}) {
     
     // Apply pattern-based superscript/subscript markup (before HTML structure is built)
     // This catches things like unit exponents (cm -3), ordinals (1st, 2nd), math notation (x^2), etc.
-    textForHTML = applySuperSubscriptMarkup(textForHTML);
+    textForHTML = applySuperSubscriptMarkup(textForHTML, {
+      strength: options.superSubSensitivity,
+    });
 
     // Apply paragraph/page-break cleanup after super/sub merge to avoid alignment regressions.
     textForHTML = removeNonParagraphLineBreaks(textForHTML, {
@@ -3030,9 +3083,12 @@ ${imagesHTML}
  * @param {string} outputPath - Path for output highlighted HTML file
  * @param {string} outputDir - Output directory for saving image files
  */
-function exportToHighlightedHTML(pdfData, outputPath, outputDir) {
+function exportToHighlightedHTML(pdfData, outputPath, outputDir, options = {}) {
   try {
-    const generated = exportToHTML(pdfData, outputPath, outputDir, { includeHighlightOverlay: false });
+    const generated = exportToHTML(pdfData, outputPath, outputDir, {
+      includeHighlightOverlay: false,
+      superSubSensitivity: options.superSubSensitivity,
+    });
     if (!generated) {
       return false;
     }
@@ -3236,7 +3292,7 @@ function exportToH5P(pdfData, outputPath) {
  * @param {Object} pdfData - Extracted PDF data
  * @param {string} outputPath - Path for output canvas HTML file
  */
-function exportToCanvasHTML(pdfData, outputPath) {
+function exportToCanvasHTML(pdfData, outputPath, options = {}) {
   try {
     const transformedText = applyTextTransformations(pdfData.text, { preserveLineBreakAlignment: true });
     let textForCanvas = transformedText;
@@ -3247,12 +3303,16 @@ function exportToCanvasHTML(pdfData, outputPath) {
         const value = (item.text || '').trim();
         return value.length > 0 && !/^Page-\d+$/i.test(value);
       });
-      const positionBasedMarkup = markupSuperSubscript(filteredMetadata);
+      const positionBasedMarkup = markupSuperSubscript(filteredMetadata, {
+        strength: options.superSubSensitivity,
+      });
       if (positionBasedMarkup && positionBasedMarkup.length > 0) {
         textForCanvas = mergeMarkupIntoText(transformedText, positionBasedMarkup);
       }
     }
-    textForCanvas = applySuperSubscriptMarkup(textForCanvas);
+    textForCanvas = applySuperSubscriptMarkup(textForCanvas, {
+      strength: options.superSubSensitivity,
+    });
 
     // Apply paragraph/page-break cleanup after super/sub merge to avoid alignment regressions.
     textForCanvas = removeNonParagraphLineBreaks(textForCanvas, {
@@ -3431,7 +3491,8 @@ async function processPDF(pdfPath, outputSubDir, formats = {}) {
     canvas: formats.canvas !== false,
     csv: formats.csv !== false,
     h5p: formats.h5p !== false,
-    images: formats.images !== false
+    images: formats.images !== false,
+    superSubSensitivity: resolveSuperSubStrength(formats.superSubSensitivity)
   };
 
   console.log(`📄 Processing PDF: ${pdfPath}\n`);
@@ -3460,7 +3521,9 @@ async function processPDF(pdfPath, outputSubDir, formats = {}) {
     if (formatOptions.html) {
       const htmlPath = path.join(outputSubDir, `${baseName}.html`);
       console.log('[ProcessPDF] Exporting interactive HTML to:', htmlPath);
-      const htmlOk = exportToHTML(pdfData, htmlPath, outputSubDir);
+      const htmlOk = exportToHTML(pdfData, htmlPath, outputSubDir, {
+        superSubSensitivity: formatOptions.superSubSensitivity,
+      });
       const htmlExists = fs.existsSync(htmlPath);
       console.log('[ProcessPDF] Interactive HTML exists:', htmlExists);
       if (!htmlOk || !htmlExists) exportFailed = true;
@@ -3470,14 +3533,18 @@ async function processPDF(pdfPath, outputSubDir, formats = {}) {
     if (formatOptions.htmlHighlighted) {
       const highlightedPath = path.join(outputSubDir, `${baseName}_highlighted.html`);
       console.log('[ProcessPDF] Exporting highlighted HTML to:', highlightedPath);
-      const highlightedOk = exportToHighlightedHTML(pdfData, highlightedPath, outputSubDir);
+      const highlightedOk = exportToHighlightedHTML(pdfData, highlightedPath, outputSubDir, {
+        superSubSensitivity: formatOptions.superSubSensitivity,
+      });
       const highlightedExists = fs.existsSync(highlightedPath);
       console.log('[ProcessPDF] Highlighted HTML exists:', highlightedExists);
       if (!highlightedOk || !highlightedExists) exportFailed = true;
     } else {
       console.log('[ProcessPDF] Skipping highlighted HTML export.');
     }
-    if (formatOptions.canvas && !exportToCanvasHTML(pdfData, path.join(outputSubDir, `${baseName}_canvas.html`))) exportFailed = true;
+    if (formatOptions.canvas && !exportToCanvasHTML(pdfData, path.join(outputSubDir, `${baseName}_canvas.html`), {
+      superSubSensitivity: formatOptions.superSubSensitivity,
+    })) exportFailed = true;
     if (formatOptions.csv && !exportToCSV(pdfData, path.join(outputSubDir, `${baseName}.csv`))) exportFailed = true;
     if (formatOptions.h5p && !exportToH5P(pdfData, path.join(outputSubDir, `${baseName}_content.json`))) exportFailed = true;
   } catch (err) {
@@ -3611,12 +3678,68 @@ function generateDashboardHTML(inputFiles, processing) {
       margin-bottom: 15px;
       font-size: 0.9em;
     }
+    .upload-panel {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      padding: 12px;
+      margin-bottom: 15px;
+    }
+    .upload-status {
+      margin-top: 10px;
+      font-size: 0.88em;
+      color: #8b949e;
+      min-height: 1.2em;
+      line-height: 1.4;
+    }
+    .upload-status.error {
+      color: #ffd7d7;
+    }
+    .upload-status.success {
+      color: #c8f7dc;
+    }
+    .upload-lock-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(13, 17, 23, 0.82);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .upload-lock-overlay.show {
+      display: flex;
+    }
+    .upload-lock-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 16px 18px;
+      max-width: 520px;
+      width: 100%;
+      line-height: 1.5;
+      font-size: 0.92em;
+      text-align: center;
+    }
     .status-message {
       background: #161b22;
       border-left: 3px solid #58a6ff;
       padding: 15px;
       margin-bottom: 20px;
       color: #c9d1d9;
+    }
+    .overwrite-warning {
+      display: none;
+      background: #2b1a1a;
+      border: 1px solid #a04040;
+      color: #ffd7d7;
+      padding: 10px 12px;
+      margin: 0 0 12px 0;
+      font-size: 0.88em;
+      line-height: 1.45;
+    }
+    .overwrite-warning.show {
+      display: block;
     }
     .update-banner {
       display: none;
@@ -3630,6 +3753,21 @@ function generateDashboardHTML(inputFiles, processing) {
     }
     .update-banner.show {
       display: block;
+    }
+    .update-banner.status-info {
+      background: #11233d;
+      border-color: #2f6fb5;
+      color: #cfe8ff;
+    }
+    .update-banner.status-success {
+      background: #12301f;
+      border-color: #2f8f57;
+      color: #c8f7dc;
+    }
+    .update-banner.status-error {
+      background: #2b1a1a;
+      border-color: #a04040;
+      color: #ffd7d7;
     }
     .update-banner code {
       color: #9bd0ff;
@@ -3675,13 +3813,14 @@ function generateDashboardHTML(inputFiles, processing) {
     <h1>PDF Converter Dashboard</h1>
     <div class="app-version-row">
       <div class="app-version">Version v${APP_VERSION}</div>
-      <button id="checkUpdatesBtn" class="check-updates-btn" type="button">Check updates</button>
+      <button id="checkUpdatesBtn" class="check-updates-btn" type="button">Check for updates</button>
     </div>
     <div id="updateBanner" class="update-banner" role="status" aria-live="polite"></div>
     
     <div class="section">
       <h2>Input Files</h2>
       <p class="description">Select the PDFs you want to convert from your input folder.</p>
+      <input id="inputUploadPicker" type="file" accept=".pdf,application/pdf" multiple style="display:none" onchange="uploadInputFiles(this, 'dashboardUploadStatus', true)">
       <div class="file-list">
         ${inputFiles.length === 0 ? `
         <div class="no-files">
@@ -3699,9 +3838,11 @@ function generateDashboardHTML(inputFiles, processing) {
         `}
       </div>
       <div class="button-group">
-        <button onclick="location.reload()">Refresh List</button>
+        <button class="btn-primary" type="button" data-upload-target="inputUploadPicker" onclick="openUploadDialog('inputUploadPicker', 'dashboardUploadStatus')">Upload PDFs to input/</button>
+        <button class="btn-primary" onclick="location.reload()">Refresh List</button>
         <button class="btn-primary" onclick="checkPDFs()" ${processing ? 'disabled' : ''}>Check PDFs</button>
       </div>
+      <div id="dashboardUploadStatus" class="upload-status" role="status" aria-live="polite"></div>
     </div>
     
     <div class="section">
@@ -3730,11 +3871,18 @@ function generateDashboardHTML(inputFiles, processing) {
           <input type="checkbox" id="fmt-images" checked> Extract Images
         </label>
       </div>
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: #c9d1d9; flex-wrap: wrap;">
+        <label for="fmt-superSubSensitivity" style="min-width: 240px;">Sub/Sup Detection Strength:</label>
+        <input id="fmt-superSubSensitivity" type="range" min="1" max="10" step="1" value="5" style="width: 220px;">
+        <strong id="fmt-superSubSensitivityValue" style="min-width: 20px;">5</strong>
+        <span style="color: #8b949e; font-size: 0.85em;">1 = no subscript auto-detection, 10 = aggressive detection</span>
+      </div>
     </div>
 
     <div class="section">
       <h2>Convert PDFs</h2>
       <p class="description">Click "Start Processing" to begin converting all PDFs in the input folder. This may take a few moments depending on file size and number of PDFs.</p>
+      <div id="overwriteWarning" class="overwrite-warning" role="status" aria-live="polite"></div>
       <div id="statusArea" style="display: none; margin-bottom: 15px;">
         <div class="status-message">
           <div><strong>Processing:</strong> <span id="currentFile">-</span></div>
@@ -3753,6 +3901,28 @@ function generateDashboardHTML(inputFiles, processing) {
   
   <script>
     let progressEventSource = null;
+    let updateBannerTimeoutId = null;
+    const existingOutputsByFile = new Map();
+
+    function renderUpdateBanner(message, status, autoHideMs = 0) {
+      const banner = document.getElementById('updateBanner');
+      if (!banner) return;
+      if (updateBannerTimeoutId) {
+        clearTimeout(updateBannerTimeoutId);
+        updateBannerTimeoutId = null;
+      }
+      banner.classList.remove('status-info', 'status-success', 'status-error');
+      banner.classList.add('show');
+      banner.classList.add(status || 'status-info');
+      banner.innerHTML = message;
+
+      if (autoHideMs > 0) {
+        updateBannerTimeoutId = setTimeout(() => {
+          banner.classList.remove('show', 'status-info', 'status-success', 'status-error');
+          updateBannerTimeoutId = null;
+        }, autoHideMs);
+      }
+    }
 
     function checkForUpdate(force = false) {
       const button = document.getElementById('checkUpdatesBtn');
@@ -3764,19 +3934,35 @@ function generateDashboardHTML(inputFiles, processing) {
       fetch('/api/update-check' + (force ? '?force=1' : ''))
         .then(r => r.json())
         .then(data => {
-          const banner = document.getElementById('updateBanner');
-          if (!banner) return;
+          if (!data || !data.success) {
+            if (force) {
+              renderUpdateBanner('Unable to check for updates right now. Please try again shortly.', 'status-error', 5000);
+            }
+            return;
+          }
 
-          if (!data || !data.success || !data.updateAvailable) return;
-          banner.innerHTML = 'Update available: <code>v' + data.latestVersion + '</code> (current: <code>v' + data.currentVersion + '</code>). ' +
-            'Run <code>npm install -g @j.hughes.cu/pdf-converter@latest</code> to update.';
-          banner.classList.add('show');
+          if (data.updateAvailable) {
+            renderUpdateBanner(
+              'Update available: <code>v' + data.latestVersion + '</code> (current: <code>v' + data.currentVersion + '</code>). ' +
+              'Run <code>npm install -g @j.hughes.cu/pdf-converter@latest</code> to update.',
+              'status-info'
+            );
+            return;
+          }
+
+          if (force) {
+            renderUpdateBanner('App is up to date (v' + data.currentVersion + ').', 'status-success', 3500);
+          }
         })
-        .catch(() => {})
+        .catch(() => {
+          if (force) {
+            renderUpdateBanner('Unable to check for updates right now. Please try again shortly.', 'status-error', 5000);
+          }
+        })
         .finally(() => {
           if (button) {
             button.disabled = false;
-            button.textContent = 'Check updates';
+            button.textContent = 'Check for updates';
           }
         });
     }
@@ -3787,6 +3973,216 @@ function generateDashboardHTML(inputFiles, processing) {
         checkForUpdate(true);
       });
     }
+
+    let uploadPickerDelayTimer = null;
+    let uploadLockOverlay = null;
+    let interfaceWasLocked = false;
+
+    function ensureUploadLockOverlay() {
+      if (uploadLockOverlay) return uploadLockOverlay;
+      const overlay = document.createElement('div');
+      overlay.className = 'upload-lock-overlay';
+      overlay.id = 'uploadLockOverlay';
+      overlay.setAttribute('aria-live', 'polite');
+      overlay.setAttribute('role', 'status');
+      overlay.innerHTML = '<div class="upload-lock-card" id="uploadLockMessage">Uploading files. Interface is temporarily disabled.</div>';
+      document.body.appendChild(overlay);
+      uploadLockOverlay = overlay;
+      return overlay;
+    }
+
+    function setInterfaceLockedForUpload(locked, message) {
+      const overlay = ensureUploadLockOverlay();
+      const messageNode = document.getElementById('uploadLockMessage');
+      if (locked) {
+        if (messageNode && message) {
+          messageNode.textContent = message;
+        }
+        overlay.classList.add('show');
+        interfaceWasLocked = true;
+        return;
+      }
+
+      overlay.classList.remove('show');
+      interfaceWasLocked = false;
+    }
+
+    function openUploadDialog(inputId, statusId) {
+      const input = document.getElementById(inputId);
+      if (input) {
+        if (uploadPickerDelayTimer) {
+          clearTimeout(uploadPickerDelayTimer);
+          uploadPickerDelayTimer = null;
+        }
+        setUploadButtonState(inputId, true, 'Opening...');
+        if (statusId) {
+          setUploadStatus(statusId, 'Opening file picker...');
+        }
+        uploadPickerDelayTimer = setTimeout(() => {
+          if (!interfaceWasLocked) {
+            setUploadButtonState(inputId, false);
+          }
+        }, 1800);
+        input.click();
+      }
+    }
+
+    function setUploadStatus(statusId, message, statusType) {
+      const statusEl = document.getElementById(statusId);
+      if (!statusEl) return;
+      statusEl.classList.remove('error', 'success');
+      if (statusType) {
+        statusEl.classList.add(statusType);
+      }
+      statusEl.textContent = message || '';
+    }
+
+    function setUploadButtonState(inputId, disabled, labelWhenDisabled) {
+      const buttons = document.querySelectorAll('button[data-upload-target="' + inputId + '"]');
+      buttons.forEach(btn => {
+        btn.disabled = disabled;
+        btn.textContent = disabled ? (labelWhenDisabled || 'Uploading...') : 'Upload PDFs to input/';
+      });
+    }
+
+    function updateSuperSubStrengthPreview() {
+      const control = document.getElementById('fmt-superSubSensitivity');
+      const valueNode = document.getElementById('fmt-superSubSensitivityValue');
+      if (control && valueNode) {
+        valueNode.textContent = String(control.value);
+      }
+    }
+
+    function deriveUploadErrorMessage(data) {
+      if (data && Array.isArray(data.skipped) && data.skipped.length > 0) {
+        const skipped = data.skipped.filter(item => item && typeof item.reason === 'string');
+        const duplicateNames = skipped
+          .filter(item => item.reason.toLowerCase().includes('duplicate file already exists'))
+          .map(item => item.name)
+          .filter(Boolean);
+        if (duplicateNames.length > 0) {
+          return 'Upload skipped: file already exists in input/ (' + duplicateNames.join(', ') + ').';
+        }
+        const reasons = [...new Set(skipped.map(item => item.reason))];
+        if (reasons.length === 1) {
+          return 'Upload skipped: ' + reasons[0] + '.';
+        }
+        return 'Upload skipped due to validation rules. Please review selected files.';
+      }
+
+      if (data && typeof data.error === 'string' && data.error.trim()) {
+        return data.error;
+      }
+
+      return 'Upload failed.';
+    }
+
+    function deriveUploadErrorMessage(data) {
+      if (data && Array.isArray(data.skipped) && data.skipped.length > 0) {
+        const skipped = data.skipped.filter(item => item && typeof item.reason === 'string');
+        const duplicateNames = skipped
+          .filter(item => item.reason.toLowerCase().includes('duplicate file already exists'))
+          .map(item => item.name)
+          .filter(Boolean);
+        if (duplicateNames.length > 0) {
+          return 'Upload skipped: file already exists in input/ (' + duplicateNames.join(', ') + ').';
+        }
+        const reasons = [...new Set(skipped.map(item => item.reason))];
+        if (reasons.length === 1) {
+          return 'Upload skipped: ' + reasons[0] + '.';
+        }
+        return 'Upload skipped due to validation rules. Please review selected files.';
+      }
+
+      if (data && typeof data.error === 'string' && data.error.trim()) {
+        return data.error;
+      }
+
+      return 'Upload failed.';
+    }
+
+    function deriveUploadErrorMessage(data) {
+      if (data && Array.isArray(data.skipped) && data.skipped.length > 0) {
+        const skipped = data.skipped.filter(item => item && typeof item.reason === 'string');
+        const duplicateNames = skipped
+          .filter(item => item.reason.toLowerCase().includes('duplicate file already exists'))
+          .map(item => item.name)
+          .filter(Boolean);
+        if (duplicateNames.length > 0) {
+          return 'Upload skipped: file already exists in input/ (' + duplicateNames.join(', ') + ').';
+        }
+        const reasons = [...new Set(skipped.map(item => item.reason))];
+        if (reasons.length === 1) {
+          return 'Upload skipped: ' + reasons[0] + '.';
+        }
+        return 'Upload skipped due to validation rules. Please review selected files.';
+      }
+
+      if (data && typeof data.error === 'string' && data.error.trim()) {
+        return data.error;
+      }
+
+      return 'Upload failed.';
+    }
+
+    async function uploadInputFiles(inputElement, statusId, reloadOnSuccess) {
+      if (uploadPickerDelayTimer) {
+        clearTimeout(uploadPickerDelayTimer);
+        uploadPickerDelayTimer = null;
+      }
+
+      const files = inputElement && inputElement.files ? Array.from(inputElement.files) : [];
+      if (files.length === 0) {
+        setUploadButtonState(inputElement.id, false);
+        setUploadStatus(statusId, 'No files selected.', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file, file.name);
+      });
+
+      setUploadButtonState(inputElement.id, true, 'Uploading...');
+      setUploadStatus(statusId, 'Copying files to input/...');
+      setInterfaceLockedForUpload(true, 'Uploading selected PDFs to input/. The interface is temporarily disabled until upload completes.');
+
+      try {
+        const response = await fetch('/api/upload-inputs', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(deriveUploadErrorMessage(data));
+        }
+
+        const uploadedCount = Array.isArray(data.uploaded) ? data.uploaded.length : 0;
+        const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+        const duplicateNames = Array.isArray(data.skipped)
+          ? data.skipped
+              .filter(item => item && typeof item.reason === 'string' && item.reason.toLowerCase().includes('duplicate file already exists'))
+              .map(item => item.name)
+          : [];
+        const message = 'Copied ' + uploadedCount + ' file(s) to input/' + (skippedCount > 0 ? (' (' + skippedCount + ' skipped)') : '') + '.';
+        setUploadStatus(statusId, message, 'success');
+
+        if (duplicateNames.length > 0) {
+          alert('Duplicate file already exists in input/: ' + duplicateNames.join(', '));
+        }
+
+        if (reloadOnSuccess && uploadedCount > 0) {
+          setTimeout(() => location.reload(), 700);
+        }
+      } catch (err) {
+        setUploadStatus(statusId, 'Upload failed: ' + err.message, 'error');
+      } finally {
+        setInterfaceLockedForUpload(false);
+        setUploadButtonState(inputElement.id, false);
+        inputElement.value = '';
+      }
+    }
     
     function saveCheckboxStates() {
       const formatStates = {
@@ -3796,8 +4192,10 @@ function generateDashboardHTML(inputFiles, processing) {
         text: document.getElementById('fmt-text').checked,
         csv: document.getElementById('fmt-csv').checked,
         h5p: document.getElementById('fmt-h5p').checked,
-        images: document.getElementById('fmt-images').checked
+        images: document.getElementById('fmt-images').checked,
+        superSubSensitivity: parseInt(document.getElementById('fmt-superSubSensitivity').value, 10)
       };
+      updateSuperSubStrengthPreview();
       localStorage.setItem('pdf-converter-formats', JSON.stringify(formatStates));
       
       const fileStates = {};
@@ -3811,9 +4209,15 @@ function generateDashboardHTML(inputFiles, processing) {
       try {
         const formatStates = JSON.parse(localStorage.getItem('pdf-converter-formats') || '{}');
         Object.keys(formatStates).forEach(key => {
-          const checkbox = document.getElementById('fmt-' + key);
-          if (checkbox) checkbox.checked = formatStates[key];
+          const control = document.getElementById('fmt-' + key);
+          if (!control) return;
+          if (control.type === 'checkbox') {
+            control.checked = !!formatStates[key];
+          } else {
+            control.value = String(formatStates[key]);
+          }
         });
+        updateSuperSubStrengthPreview();
         
         const fileStates = JSON.parse(localStorage.getItem('pdf-converter-files') || '{}');
         document.querySelectorAll('.file-checkbox').forEach(cb => {
@@ -3834,7 +4238,8 @@ function generateDashboardHTML(inputFiles, processing) {
         text: document.getElementById('fmt-text').checked,
         csv: document.getElementById('fmt-csv').checked,
         h5p: document.getElementById('fmt-h5p').checked,
-        images: document.getElementById('fmt-images').checked
+        images: document.getElementById('fmt-images').checked,
+        superSubSensitivity: parseInt(document.getElementById('fmt-superSubSensitivity').value, 10)
       };
     }
     
@@ -3856,6 +4261,91 @@ function generateDashboardHTML(inputFiles, processing) {
         .map(cb => cb.dataset.file);
     }
 
+    function getSelectedFormatKeysForOverwrite() {
+      const formats = getSelectedFormats();
+      const keys = [];
+      if (formats.html) keys.push('html');
+      if (formats.htmlHighlighted) keys.push('highlighted');
+      if (formats.canvas) keys.push('canvas');
+      if (formats.text) keys.push('text');
+      if (formats.csv) keys.push('csv');
+      if (formats.h5p) keys.push('h5p');
+      if (formats.images) keys.push('images');
+      return keys;
+    }
+
+    function fileWouldOverwriteSelectedFormats(filename, selectedFormatKeys) {
+      const existing = existingOutputsByFile.get(filename);
+      if (!existing) return false;
+      return selectedFormatKeys.some(key => !!existing[key]);
+    }
+
+    function getOverwriteFormatLabels(formatKeys) {
+      const labels = {
+        html: 'interactive HTML',
+        highlighted: 'highlighted HTML',
+        canvas: 'canvas HTML',
+        text: 'plain text',
+        csv: 'CSV',
+        h5p: 'H5P',
+        images: 'images',
+      };
+      return formatKeys.map(key => labels[key] || key);
+    }
+
+    function getOverwrittenFormatKeysForFiles(files, selectedFormatKeys) {
+      const overlap = new Set();
+      files.forEach(filename => {
+        const existing = existingOutputsByFile.get(filename);
+        if (!existing) return;
+        selectedFormatKeys.forEach(key => {
+          if (existing[key]) {
+            overlap.add(key);
+          }
+        });
+      });
+      return Array.from(overlap);
+    }
+
+    function getOverwrittenFormatKeysForFile(filename, selectedFormatKeys) {
+      const existing = existingOutputsByFile.get(filename);
+      if (!existing) return [];
+      return selectedFormatKeys.filter(key => !!existing[key]);
+    }
+
+    function buildOverwriteFileMessages(files, selectedFormatKeys, limit) {
+      const capped = files.slice(0, limit);
+      return capped.map(filename => {
+        const formatKeys = getOverwrittenFormatKeysForFile(filename, selectedFormatKeys);
+        const formatLabels = getOverwriteFormatLabels(formatKeys);
+        return 'File: ' + filename + ', formats: ' + (formatLabels.join(', ') || 'selected outputs');
+      });
+    }
+
+    function getOverwritingFiles() {
+      const selected = getSelectedFiles();
+      const selectedFormatKeys = getSelectedFormatKeysForOverwrite();
+      return selected.filter(name => fileWouldOverwriteSelectedFormats(name, selectedFormatKeys));
+    }
+
+    function updateOverwriteWarning() {
+      const warningEl = document.getElementById('overwriteWarning');
+      if (!warningEl) return;
+
+      const selectedFormatKeys = getSelectedFormatKeysForOverwrite();
+      const overwriting = getOverwritingFiles();
+      if (overwriting.length === 0) {
+        warningEl.classList.remove('show');
+        warningEl.textContent = '';
+        return;
+      }
+
+      const fileMessages = buildOverwriteFileMessages(overwriting, selectedFormatKeys, 3);
+      const moreCount = overwriting.length > 3 ? overwriting.length - 3 : 0;
+      warningEl.textContent = 'Warning: ' + overwriting.length + ' selected file(s) will overwrite existing outputs - ' + fileMessages.join(' | ') + (moreCount > 0 ? (' | +' + moreCount + ' more') : '') + '.';
+      warningEl.classList.add('show');
+    }
+
     function updateSelectAllState() {
       const boxes = Array.from(document.querySelectorAll('.file-checkbox'));
       const selectAll = document.getElementById('selectAll');
@@ -3870,14 +4360,24 @@ function generateDashboardHTML(inputFiles, processing) {
       
       viewBtn = document.createElement('button');
       viewBtn.className = 'view-output-btn';
-      viewBtn.textContent = 'View Output';
+      viewBtn.textContent = 'View in OS';
       viewBtn.type = 'button';
       viewBtn.style.cssText = 'background: #1f6feb; color: white; border: 1px solid #1f6feb; border-radius: 4px; padding: 4px 10px; font-size: 0.85em; cursor: pointer; margin-left: 8px;';
-      viewBtn.onclick = (e) => {
+      viewBtn.onclick = async (e) => {
         e.preventDefault();
-        const baseName = filename.replace(/\.pdf$/i, '');
-        const windowName = 'pdf-output-' + baseName.replace(/[^a-zA-Z0-9]/g, '-');
-        window.open('/output/' + encodeURIComponent(baseName) + '/', windowName);
+        try {
+          const response = await fetch('/api/open-output-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: filename })
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error((data && data.error) || 'Failed to open output folder');
+          }
+        } catch (err) {
+          alert('Open folder failed: ' + err.message);
+        }
       };
       viewBtn.onmouseover = () => viewBtn.style.background = '#388bfd';
       viewBtn.onmouseout = () => viewBtn.style.background = '#1f6feb';
@@ -3942,36 +4442,56 @@ function generateDashboardHTML(inputFiles, processing) {
           cb.checked = checked;
         });
         saveCheckboxStates();
+        updateOverwriteWarning();
       });
       
       document.querySelectorAll('.file-checkbox').forEach(cb => {
         cb.addEventListener('change', () => {
           updateSelectAllState();
           saveCheckboxStates();
+          updateOverwriteWarning();
         });
       });
       
       // Save format checkbox changes
-      ['html', 'htmlHighlighted', 'canvas', 'text', 'csv', 'h5p', 'images'].forEach(fmt => {
+      ['html', 'htmlHighlighted', 'canvas', 'text', 'csv', 'h5p', 'images', 'superSubSensitivity'].forEach(fmt => {
         const checkbox = document.getElementById('fmt-' + fmt);
         if (checkbox) {
           checkbox.addEventListener('change', saveCheckboxStates);
+          if (fmt !== 'superSubSensitivity') {
+            checkbox.addEventListener('change', updateOverwriteWarning);
+          }
+          if (fmt === 'superSubSensitivity') {
+            checkbox.addEventListener('input', updateSuperSubStrengthPreview);
+          }
         }
       });
       
+      updateSuperSubStrengthPreview();
       updateSelectAllState();
+      updateOverwriteWarning();
       
       // Check for existing outputs and add View Output buttons
       fetch('/api/check-outputs')
         .then(r => r.json())
         .then(data => {
-          const processedSet = new Set(data.processedFiles || []);
+          const files = (data && data.files && typeof data.files === 'object') ? data.files : {};
+          const processedSet = new Set();
+          existingOutputsByFile.clear();
+          Object.keys(files).forEach(filename => {
+            const outputs = files[filename] || {};
+            existingOutputsByFile.set(filename, outputs);
+            if (Object.values(outputs).some(Boolean)) {
+              processedSet.add(filename);
+            }
+          });
           document.querySelectorAll('.file-checkbox').forEach(checkbox => {
             const filename = checkbox.dataset.file;
             if (processedSet.has(filename)) {
               addViewOutputButton(checkbox, filename);
             }
           });
+          updateOverwriteWarning();
         })
         .catch(err => console.error('Error checking outputs:', err));
     }
@@ -4046,6 +4566,8 @@ function generateDashboardHTML(inputFiles, processing) {
     function startProcessing() {
       const formats = getSelectedFormats();
       const selectedFiles = getSelectedFiles();
+      const selectedFormatKeys = getSelectedFormatKeysForOverwrite();
+      const overwritingFiles = selectedFiles.filter(name => fileWouldOverwriteSelectedFormats(name, selectedFormatKeys));
       const fileCount = selectedFiles.length;
       
       if (fileCount === 0) {
@@ -4053,7 +4575,14 @@ function generateDashboardHTML(inputFiles, processing) {
         return;
       }
       
-      if (!confirm('Start processing ' + fileCount + ' PDF(s) with selected formats?')) return;
+      let confirmMessage = 'Start processing ' + fileCount + ' PDF(s) with selected formats?';
+      if (overwritingFiles.length > 0) {
+        const fileMessages = buildOverwriteFileMessages(overwritingFiles, selectedFormatKeys, 5).join('\\n');
+        const more = overwritingFiles.length > 5 ? (' +' + (overwritingFiles.length - 5) + ' more') : '';
+        confirmMessage = 'Are you sure you want to continue with the output overwrites as detailed below?\\n\\n' + fileMessages + more;
+      }
+
+      if (!confirm(confirmMessage)) return;
       
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
@@ -4099,11 +4628,337 @@ function generateDashboardHTML(inputFiles, processing) {
         .catch(err => alert('Error canceling: ' + err.message));
     }
 
+    window.startProcessing = startProcessing;
+    window.cancelProcessing = cancelProcessing;
+
     initFileSelection();
     checkForUpdate();
   </script>
 </body>
 </html>`;
+}
+
+/**
+ * Generates introduction page shown when both input and output folders are empty
+ * @param {boolean} hasOutput - Whether output folder contains previously generated documents
+ * @returns {string} HTML content
+ */
+function generateIntroductionHTML(hasOutput = false) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Converter - Introduction</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #58a6ff;
+      margin-bottom: 20px;
+      font-size: 1.5em;
+      font-weight: normal;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 10px;
+    }
+    .app-version {
+      color: #8b949e;
+      font-size: 0.85em;
+      margin: -10px 0 20px 0;
+    }
+    .section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .section h2 {
+      color: #58a6ff;
+      font-size: 1.05em;
+      font-weight: normal;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 8px;
+    }
+    .section p {
+      color: #8b949e;
+      line-height: 1.6;
+      margin-bottom: 10px;
+      font-size: 0.95em;
+    }
+    .section p:last-child {
+      margin-bottom: 0;
+    }
+    .steps {
+      margin: 0;
+      padding-left: 20px;
+      color: #c9d1d9;
+      line-height: 1.8;
+      font-size: 0.95em;
+    }
+    .steps li {
+      margin-bottom: 6px;
+    }
+    .steps li:last-child {
+      margin-bottom: 0;
+    }
+    .upload-status {
+      margin-top: 10px;
+      font-size: 0.88em;
+      color: #8b949e;
+      min-height: 1.2em;
+      line-height: 1.4;
+    }
+    .upload-status.error {
+      color: #ffd7d7;
+    }
+    .upload-status.success {
+      color: #c8f7dc;
+    }
+    .upload-lock-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(13, 17, 23, 0.82);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .upload-lock-overlay.show {
+      display: flex;
+    }
+    .upload-lock-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 16px 18px;
+      max-width: 520px;
+      width: 100%;
+      line-height: 1.5;
+      font-size: 0.92em;
+      text-align: center;
+    }
+    code {
+      color: #9bd0ff;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+    .cta-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 12px 20px;
+      background: #21262d;
+      color: #58a6ff;
+      border: 1px solid #30363d;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.95em;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+    button:hover {
+      background: #30363d;
+      border-color: #58a6ff;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PDF Converter</h1>
+    <div class="app-version">Version v${APP_VERSION}</div>
+
+    <div class="section">
+      <h2>What this tool does</h2>
+      <p>This tool converts PDF files into editable and export-ready outputs for review, LMS publishing, and downstream processing.</p>
+      <p>It can generate interactive HTML, highlighted HTML, Canvas-ready HTML, plain text, edited text, CSV, H5P content, and extracted images.</p>
+      ${hasOutput ? '<p><strong>Note:</strong> Some files may already exist in <code>output/</code> from previous processing runs.</p>' : ''}
+    </div>
+
+    <div class="section">
+      <h2>How to use it</h2>
+      <ol class="steps">
+        <li>Copy one or more PDF files into the <code>input/</code> folder, or use the upload button below.</li>
+        <li>Refresh this page to open the dashboard.</li>
+        <li>Select output formats and click <em>Start Processing</em>.</li>
+        <li>Open results from the output menu after processing completes.</li>
+      </ol>
+      <div class="cta-row">
+        <input id="introUploadPicker" type="file" accept=".pdf,application/pdf" multiple style="display:none" onchange="uploadInputFiles(this, 'introUploadStatus', true)">
+        <button type="button" data-upload-target="introUploadPicker" onclick="openUploadDialog('introUploadPicker', 'introUploadStatus')">Upload PDFs to input/</button>
+        <button type="button" onclick="location.reload()">Refresh</button>
+        ${hasOutput ? '<button type="button" onclick="location.href=\'/menu\'">Open Existing Output</button>' : ''}
+      </div>
+      <div id="introUploadStatus" class="upload-status" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    let uploadPickerDelayTimer = null;
+    let uploadLockOverlay = null;
+    let interfaceWasLocked = false;
+
+    function ensureUploadLockOverlay() {
+      if (uploadLockOverlay) return uploadLockOverlay;
+      const overlay = document.createElement('div');
+      overlay.className = 'upload-lock-overlay';
+      overlay.id = 'uploadLockOverlay';
+      overlay.setAttribute('aria-live', 'polite');
+      overlay.setAttribute('role', 'status');
+      overlay.innerHTML = '<div class="upload-lock-card" id="uploadLockMessage">Uploading files. Interface is temporarily disabled.</div>';
+      document.body.appendChild(overlay);
+      uploadLockOverlay = overlay;
+      return overlay;
+    }
+
+    function setInterfaceLockedForUpload(locked, message) {
+      const overlay = ensureUploadLockOverlay();
+      const messageNode = document.getElementById('uploadLockMessage');
+      if (locked) {
+        if (messageNode && message) {
+          messageNode.textContent = message;
+        }
+        overlay.classList.add('show');
+        interfaceWasLocked = true;
+        return;
+      }
+
+      overlay.classList.remove('show');
+      interfaceWasLocked = false;
+    }
+
+    function openUploadDialog(inputId, statusId) {
+      const input = document.getElementById(inputId);
+      if (input) {
+        if (uploadPickerDelayTimer) {
+          clearTimeout(uploadPickerDelayTimer);
+          uploadPickerDelayTimer = null;
+        }
+        setUploadButtonState(inputId, true, 'Opening...');
+        if (statusId) {
+          setUploadStatus(statusId, 'Opening file picker...');
+        }
+        uploadPickerDelayTimer = setTimeout(() => {
+          if (!interfaceWasLocked) {
+            setUploadButtonState(inputId, false);
+          }
+        }, 1800);
+        input.click();
+      }
+    }
+
+    function setUploadStatus(statusId, message, statusType) {
+      const statusEl = document.getElementById(statusId);
+      if (!statusEl) return;
+      statusEl.classList.remove('error', 'success');
+      if (statusType) {
+        statusEl.classList.add(statusType);
+      }
+      statusEl.textContent = message || '';
+    }
+
+    function setUploadButtonState(inputId, disabled, labelWhenDisabled) {
+      const buttons = document.querySelectorAll('button[data-upload-target="' + inputId + '"]');
+      buttons.forEach(btn => {
+        btn.disabled = disabled;
+        btn.textContent = disabled ? (labelWhenDisabled || 'Uploading...') : 'Upload PDFs to input/';
+      });
+    }
+
+    async function uploadInputFiles(inputElement, statusId, reloadOnSuccess) {
+      if (uploadPickerDelayTimer) {
+        clearTimeout(uploadPickerDelayTimer);
+        uploadPickerDelayTimer = null;
+      }
+
+      const files = inputElement && inputElement.files ? Array.from(inputElement.files) : [];
+      if (files.length === 0) {
+        setUploadButtonState(inputElement.id, false);
+        setUploadStatus(statusId, 'No files selected.', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file, file.name);
+      });
+
+      setUploadButtonState(inputElement.id, true, 'Uploading...');
+      setUploadStatus(statusId, 'Copying files to input/...');
+      setInterfaceLockedForUpload(true, 'Uploading selected PDFs to input/. The interface is temporarily disabled until upload completes.');
+
+      try {
+        const response = await fetch('/api/upload-inputs', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(deriveUploadErrorMessage(data));
+        }
+
+        const uploadedCount = Array.isArray(data.uploaded) ? data.uploaded.length : 0;
+        const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+        const duplicateNames = Array.isArray(data.skipped)
+          ? data.skipped
+              .filter(item => item && typeof item.reason === 'string' && item.reason.toLowerCase().includes('duplicate file already exists'))
+              .map(item => item.name)
+          : [];
+        const message = 'Copied ' + uploadedCount + ' file(s) to input/' + (skippedCount > 0 ? (' (' + skippedCount + ' skipped)') : '') + '.';
+        setUploadStatus(statusId, message, 'success');
+
+        if (duplicateNames.length > 0) {
+          alert('Duplicate file already exists in input/: ' + duplicateNames.join(', '));
+        }
+
+        if (reloadOnSuccess && uploadedCount > 0) {
+          setTimeout(() => location.reload(), 700);
+        }
+      } catch (err) {
+        setUploadStatus(statusId, 'Upload failed: ' + err.message, 'error');
+      } finally {
+        setInterfaceLockedForUpload(false);
+        setUploadButtonState(inputElement.id, false);
+        inputElement.value = '';
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Checks whether any converted output folders exist
+ * @param {string} outputBaseDir - Base output directory
+ * @returns {boolean} True when output contains at least one document directory
+ */
+function hasOutputDocuments(outputBaseDir) {
+  if (!fs.existsSync(outputBaseDir)) {
+    return false;
+  }
+
+  const items = fs.readdirSync(outputBaseDir);
+  return items.some(item => {
+    const itemPath = path.join(outputBaseDir, item);
+    return fs.existsSync(itemPath) && fs.statSync(itemPath).isDirectory();
+  });
 }
 
 /**
@@ -4273,6 +5128,55 @@ function generateMenuHTML(outputBaseDir) {
       color: #ffb3b3;
       font-family: 'Consolas', 'Monaco', monospace;
     }
+    .upload-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      padding: 14px;
+      margin-bottom: 20px;
+    }
+    .upload-panel p {
+      color: #8b949e;
+      font-size: 0.9em;
+      margin: 0 0 10px 0;
+      line-height: 1.5;
+    }
+    .upload-status {
+      margin-top: 10px;
+      font-size: 0.88em;
+      color: #8b949e;
+      min-height: 1.2em;
+      line-height: 1.4;
+    }
+    .upload-status.error {
+      color: #ffd7d7;
+    }
+    .upload-status.success {
+      color: #c8f7dc;
+    }
+    .upload-lock-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(13, 17, 23, 0.82);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .upload-lock-overlay.show {
+      display: flex;
+    }
+    .upload-lock-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 16px 18px;
+      max-width: 520px;
+      width: 100%;
+      line-height: 1.5;
+      font-size: 0.92em;
+      text-align: center;
+    }
     .app-version {
       color: #8b949e;
       font-size: 0.85em;
@@ -4319,6 +5223,21 @@ function generateMenuHTML(outputBaseDir) {
     .update-banner.show {
       display: block;
     }
+    .update-banner.status-info {
+      background: #11233d;
+      border-color: #2f6fb5;
+      color: #cfe8ff;
+    }
+    .update-banner.status-success {
+      background: #12301f;
+      border-color: #2f8f57;
+      color: #c8f7dc;
+    }
+    .update-banner.status-error {
+      background: #2b1a1a;
+      border-color: #a04040;
+      color: #ffd7d7;
+    }
     .update-banner code {
       color: #9bd0ff;
       font-family: 'Consolas', 'Monaco', monospace;
@@ -4364,10 +5283,16 @@ function generateMenuHTML(outputBaseDir) {
       <strong>No files were found in <code>input/</code>.</strong><br>
       You must add one or more PDF files to <code>input/</code> to continue processing new documents.
     </div>` : ''}
+    <div class="upload-panel">
+      <p>Select PDF files from this machine to copy them into <code>input/</code>.</p>
+      <input id="menuUploadPicker" type="file" accept=".pdf,application/pdf" multiple style="display:none" onchange="uploadInputFiles(this, 'menuUploadStatus', true)">
+      <button type="button" data-upload-target="menuUploadPicker" onclick="openUploadDialog('menuUploadPicker', 'menuUploadStatus')">Upload PDFs to input/</button>
+      <div id="menuUploadStatus" class="upload-status" role="status" aria-live="polite"></div>
+    </div>
     <h1>PDF Converter Output</h1>
     <div class="app-version-row">
       <div class="app-version">Version v${APP_VERSION}</div>
-      <button id="checkUpdatesBtn" class="check-updates-btn" type="button">Check updates</button>
+      <button id="checkUpdatesBtn" class="check-updates-btn" type="button">Check for updates</button>
     </div>
     <div id="updateBanner" class="update-banner" role="status" aria-live="polite"></div>
     <div class="file-key">
@@ -4407,6 +5332,158 @@ function generateMenuHTML(outputBaseDir) {
   </div>
   
   <script>
+    let updateBannerTimeoutId = null;
+
+    let uploadPickerDelayTimer = null;
+    let uploadLockOverlay = null;
+    let interfaceWasLocked = false;
+
+    function ensureUploadLockOverlay() {
+      if (uploadLockOverlay) return uploadLockOverlay;
+      const overlay = document.createElement('div');
+      overlay.className = 'upload-lock-overlay';
+      overlay.id = 'uploadLockOverlay';
+      overlay.setAttribute('aria-live', 'polite');
+      overlay.setAttribute('role', 'status');
+      overlay.innerHTML = '<div class="upload-lock-card" id="uploadLockMessage">Uploading files. Interface is temporarily disabled.</div>';
+      document.body.appendChild(overlay);
+      uploadLockOverlay = overlay;
+      return overlay;
+    }
+
+    function setInterfaceLockedForUpload(locked, message) {
+      const overlay = ensureUploadLockOverlay();
+      const messageNode = document.getElementById('uploadLockMessage');
+      if (locked) {
+        if (messageNode && message) {
+          messageNode.textContent = message;
+        }
+        overlay.classList.add('show');
+        interfaceWasLocked = true;
+        return;
+      }
+
+      overlay.classList.remove('show');
+      interfaceWasLocked = false;
+    }
+
+    function openUploadDialog(inputId, statusId) {
+      const input = document.getElementById(inputId);
+      if (input) {
+        if (uploadPickerDelayTimer) {
+          clearTimeout(uploadPickerDelayTimer);
+          uploadPickerDelayTimer = null;
+        }
+        setUploadButtonState(inputId, true, 'Opening...');
+        if (statusId) {
+          setUploadStatus(statusId, 'Opening file picker...');
+        }
+        uploadPickerDelayTimer = setTimeout(() => {
+          if (!interfaceWasLocked) {
+            setUploadButtonState(inputId, false);
+          }
+        }, 1800);
+        input.click();
+      }
+    }
+
+    function setUploadStatus(statusId, message, statusType) {
+      const statusEl = document.getElementById(statusId);
+      if (!statusEl) return;
+      statusEl.classList.remove('error', 'success');
+      if (statusType) {
+        statusEl.classList.add(statusType);
+      }
+      statusEl.textContent = message || '';
+    }
+
+    function setUploadButtonState(inputId, disabled, labelWhenDisabled) {
+      const buttons = document.querySelectorAll('button[data-upload-target="' + inputId + '"]');
+      buttons.forEach(btn => {
+        btn.disabled = disabled;
+        btn.textContent = disabled ? (labelWhenDisabled || 'Uploading...') : 'Upload PDFs to input/';
+      });
+    }
+
+    async function uploadInputFiles(inputElement, statusId, reloadOnSuccess) {
+      if (uploadPickerDelayTimer) {
+        clearTimeout(uploadPickerDelayTimer);
+        uploadPickerDelayTimer = null;
+      }
+
+      const files = inputElement && inputElement.files ? Array.from(inputElement.files) : [];
+      if (files.length === 0) {
+        setUploadButtonState(inputElement.id, false);
+        setUploadStatus(statusId, 'No files selected.', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file, file.name);
+      });
+
+      setUploadButtonState(inputElement.id, true, 'Uploading...');
+      setUploadStatus(statusId, 'Copying files to input/...');
+      setInterfaceLockedForUpload(true, 'Uploading selected PDFs to input/. The interface is temporarily disabled until upload completes.');
+
+      try {
+        const response = await fetch('/api/upload-inputs', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(deriveUploadErrorMessage(data));
+        }
+
+        const uploadedCount = Array.isArray(data.uploaded) ? data.uploaded.length : 0;
+        const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+        const duplicateNames = Array.isArray(data.skipped)
+          ? data.skipped
+              .filter(item => item && typeof item.reason === 'string' && item.reason.toLowerCase().includes('duplicate file already exists'))
+              .map(item => item.name)
+          : [];
+        const message = 'Copied ' + uploadedCount + ' file(s) to input/' + (skippedCount > 0 ? (' (' + skippedCount + ' skipped)') : '') + '.';
+        setUploadStatus(statusId, message, 'success');
+
+        if (duplicateNames.length > 0) {
+          alert('Duplicate file already exists in input/: ' + duplicateNames.join(', '));
+        }
+
+        if (reloadOnSuccess && uploadedCount > 0) {
+          setTimeout(() => location.reload(), 700);
+        }
+      } catch (err) {
+        setUploadStatus(statusId, 'Upload failed: ' + err.message, 'error');
+      } finally {
+        setInterfaceLockedForUpload(false);
+        setUploadButtonState(inputElement.id, false);
+        inputElement.value = '';
+      }
+    }
+
+    function renderUpdateBanner(message, status, autoHideMs = 0) {
+      const banner = document.getElementById('updateBanner');
+      if (!banner) return;
+      if (updateBannerTimeoutId) {
+        clearTimeout(updateBannerTimeoutId);
+        updateBannerTimeoutId = null;
+      }
+      banner.classList.remove('status-info', 'status-success', 'status-error');
+      banner.classList.add('show');
+      banner.classList.add(status || 'status-info');
+      banner.innerHTML = message;
+
+      if (autoHideMs > 0) {
+        updateBannerTimeoutId = setTimeout(() => {
+          banner.classList.remove('show', 'status-info', 'status-success', 'status-error');
+          updateBannerTimeoutId = null;
+        }, autoHideMs);
+      }
+    }
+
     function checkForUpdate(force = false) {
       const button = document.getElementById('checkUpdatesBtn');
       if (button && force) {
@@ -4417,19 +5494,35 @@ function generateMenuHTML(outputBaseDir) {
       fetch('/api/update-check' + (force ? '?force=1' : ''))
         .then(r => r.json())
         .then(data => {
-          const banner = document.getElementById('updateBanner');
-          if (!banner) return;
+          if (!data || !data.success) {
+            if (force) {
+              renderUpdateBanner('Unable to check for updates right now. Please try again shortly.', 'status-error', 5000);
+            }
+            return;
+          }
 
-          if (!data || !data.success || !data.updateAvailable) return;
-          banner.innerHTML = 'Update available: <code>v' + data.latestVersion + '</code> (current: <code>v' + data.currentVersion + '</code>). ' +
-            'Run <code>npm install -g @j.hughes.cu/pdf-converter@latest</code> to update.';
-          banner.classList.add('show');
+          if (data.updateAvailable) {
+            renderUpdateBanner(
+              'Update available: <code>v' + data.latestVersion + '</code> (current: <code>v' + data.currentVersion + '</code>). ' +
+              'Run <code>npm install -g @j.hughes.cu/pdf-converter@latest</code> to update.',
+              'status-info'
+            );
+            return;
+          }
+
+          if (force) {
+            renderUpdateBanner('App is up to date (v' + data.currentVersion + ').', 'status-success', 3500);
+          }
         })
-        .catch(() => {})
+        .catch(() => {
+          if (force) {
+            renderUpdateBanner('Unable to check for updates right now. Please try again shortly.', 'status-error', 5000);
+          }
+        })
         .finally(() => {
           if (button) {
             button.disabled = false;
-            button.textContent = 'Check updates';
+            button.textContent = 'Check for updates';
           }
         });
     }
@@ -4649,6 +5742,232 @@ function readRequestBody(req) {
   });
 }
 
+function readRequestBuffer(req, maxBytes = 50 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalSize = 0;
+    let done = false;
+
+    req.on('data', chunk => {
+      if (done) return;
+      const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalSize += chunkBuffer.length;
+      if (totalSize > maxBytes) {
+        done = true;
+        req.destroy();
+        reject(new Error('Upload too large (max 50 MB)'));
+        return;
+      }
+      chunks.push(chunkBuffer);
+    });
+
+    req.on('end', () => {
+      if (done) return;
+      done = true;
+      resolve(Buffer.concat(chunks));
+    });
+
+    req.on('error', err => {
+      if (done) return;
+      done = true;
+      reject(err);
+    });
+  });
+}
+
+function sanitizeUploadFilename(rawFilename) {
+  const source = typeof rawFilename === 'string' ? rawFilename.trim() : '';
+  if (!source) return null;
+
+  const base = path.basename(source);
+  const cleaned = base
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned || null;
+}
+
+function getUniqueInputFilePath(inputDir, filename) {
+  const resolvedInput = path.resolve(inputDir);
+
+  const candidatePath = path.join(inputDir, filename);
+
+  const resolvedCandidate = path.resolve(candidatePath);
+  if (!resolvedCandidate.startsWith(resolvedInput)) {
+    throw new Error('Invalid upload destination path');
+  }
+
+  if (fs.existsSync(candidatePath)) {
+    throw new Error('duplicate file already exists in input/');
+  }
+
+  return candidatePath;
+}
+
+function parseMultipartFiles(bodyBuffer, contentTypeHeader) {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentTypeHeader || '');
+  if (!boundaryMatch) {
+    throw new Error('Missing multipart boundary');
+  }
+
+  const boundary = boundaryMatch[1] || boundaryMatch[2];
+  const boundaryBuffer = Buffer.from(`--${boundary}`);
+  const headerSeparator = Buffer.from('\r\n\r\n');
+  const files = [];
+  let cursor = 0;
+
+  while (cursor < bodyBuffer.length) {
+    const boundaryPos = bodyBuffer.indexOf(boundaryBuffer, cursor);
+    if (boundaryPos === -1) {
+      break;
+    }
+
+    let partStart = boundaryPos + boundaryBuffer.length;
+    const boundaryTail = bodyBuffer.slice(partStart, partStart + 2).toString('utf8');
+    if (boundaryTail === '--') {
+      break;
+    }
+
+    if (bodyBuffer[partStart] === 13 && bodyBuffer[partStart + 1] === 10) {
+      partStart += 2;
+    }
+
+    const nextBoundaryPos = bodyBuffer.indexOf(boundaryBuffer, partStart);
+    if (nextBoundaryPos === -1) {
+      break;
+    }
+
+    let part = bodyBuffer.slice(partStart, nextBoundaryPos);
+    if (part.length >= 2 && part[part.length - 2] === 13 && part[part.length - 1] === 10) {
+      part = part.slice(0, -2);
+    }
+
+    const headerEnd = part.indexOf(headerSeparator);
+    if (headerEnd === -1) {
+      cursor = nextBoundaryPos + boundaryBuffer.length;
+      continue;
+    }
+
+    const headerText = part.slice(0, headerEnd).toString('utf8');
+    const content = part.slice(headerEnd + headerSeparator.length);
+    const dispositionMatch = /content-disposition:[^\r\n]*name="([^"]*)"(?:;\s*filename="([^"]*)")?/i.exec(headerText);
+
+    if (dispositionMatch) {
+      const fieldName = dispositionMatch[1] || '';
+      const filename = dispositionMatch[2] || '';
+      const typeMatch = /content-type:\s*([^\r\n]+)/i.exec(headerText);
+
+      if (filename) {
+        files.push({
+          fieldName,
+          filename,
+          contentType: typeMatch ? typeMatch[1].trim() : 'application/octet-stream',
+          data: content,
+        });
+      }
+    }
+
+    cursor = nextBoundaryPos + boundaryBuffer.length;
+  }
+
+  return files;
+}
+
+function parseUploadWithBusboy(req, inputDir) {
+  return new Promise((resolve, reject) => {
+    const uploaded = [];
+    const skipped = [];
+    const tasks = [];
+
+    let parser;
+    try {
+      parser = Busboy({
+        headers: req.headers,
+        limits: {
+          fileSize: 50 * 1024 * 1024,
+          files: 100,
+        },
+      });
+    } catch (err) {
+      reject(new Error(`Invalid upload payload: ${err.message}`));
+      return;
+    }
+
+    parser.on('file', (_fieldName, fileStream, info) => {
+      const rawFilename = (info && typeof info.filename === 'string') ? info.filename : '';
+      const safeFilename = sanitizeUploadFilename(rawFilename);
+
+      if (!safeFilename) {
+        skipped.push({ name: rawFilename || 'unknown', reason: 'invalid filename' });
+        fileStream.resume();
+        return;
+      }
+
+      if (!safeFilename.toLowerCase().endsWith('.pdf')) {
+        skipped.push({ name: safeFilename, reason: 'only .pdf files are accepted' });
+        fileStream.resume();
+        return;
+      }
+
+      const chunks = [];
+      let totalBytes = 0;
+      let exceededSizeLimit = false;
+
+      fileStream.on('data', chunk => {
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+      });
+
+      fileStream.on('limit', () => {
+        exceededSizeLimit = true;
+      });
+
+      const task = new Promise(resolveTask => {
+        fileStream.on('end', () => {
+          if (exceededSizeLimit) {
+            skipped.push({ name: safeFilename, reason: 'file too large (max 50 MB)' });
+            resolveTask();
+            return;
+          }
+
+          if (totalBytes === 0) {
+            skipped.push({ name: safeFilename, reason: 'empty file' });
+            resolveTask();
+            return;
+          }
+
+          try {
+            const targetPath = getUniqueInputFilePath(inputDir, safeFilename);
+            fs.writeFileSync(targetPath, Buffer.concat(chunks));
+            uploaded.push(path.basename(targetPath));
+          } catch (err) {
+            skipped.push({ name: safeFilename, reason: err.message || 'write failed' });
+          }
+          resolveTask();
+        });
+
+        fileStream.on('error', () => {
+          skipped.push({ name: safeFilename, reason: 'stream error' });
+          resolveTask();
+        });
+      });
+
+      tasks.push(task);
+    });
+
+    parser.on('error', err => reject(new Error(`Upload parsing failed: ${err.message}`)));
+
+    parser.on('finish', () => {
+      Promise.all(tasks)
+        .then(() => resolve({ uploaded, skipped }))
+        .catch(reject);
+    });
+
+    req.pipe(parser);
+  });
+}
+
 function normalizeDocumentState(rawState = {}) {
   const edits = (rawState.edits && typeof rawState.edits === 'object' && !Array.isArray(rawState.edits)) ? rawState.edits : {};
   const merges = Array.isArray(rawState.merges)
@@ -4711,18 +6030,40 @@ function startServer(outputBaseDir, port = 3000) {
       const inputFiles = fs.existsSync(inputDir)
         ? fs.readdirSync(inputDir).filter(f => f.toLowerCase().endsWith('.pdf'))
         : [];
-      const processedFiles = [];
+      const files = {};
       
       inputFiles.forEach(file => {
         const baseName = path.basename(file, path.extname(file));
         const outputDir = path.join(outputBaseDir, baseName);
-        if (fs.existsSync(outputDir)) {
-          processedFiles.push(file);
+
+        const outputs = {
+          html: false,
+          highlighted: false,
+          canvas: false,
+          text: false,
+          csv: false,
+          h5p: false,
+          images: false,
+        };
+
+        if (fs.existsSync(outputDir) && fs.statSync(outputDir).isDirectory()) {
+          const dirFiles = fs.readdirSync(outputDir);
+          outputs.html = dirFiles.some(f => f.endsWith('.html') && !f.endsWith('_canvas.html') && !f.endsWith('_highlighted.html'));
+          outputs.highlighted = dirFiles.some(f => f.endsWith('_highlighted.html'));
+          outputs.canvas = dirFiles.some(f => f.endsWith('_canvas.html'));
+          outputs.text = dirFiles.some(f => f.endsWith('.txt') && !f.endsWith('_edited.txt'));
+          outputs.csv = dirFiles.some(f => f.endsWith('.csv'));
+          outputs.h5p = dirFiles.some(f => f.endsWith('_content.json'));
+          outputs.images = fs.existsSync(path.join(outputDir, 'images'));
         }
+
+        files[file] = outputs;
       });
+
+      const processedFiles = Object.keys(files).filter(file => Object.values(files[file]).some(Boolean));
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ processedFiles }));
+      res.end(JSON.stringify({ processedFiles, files }));
       return;
     }
 
@@ -4789,6 +6130,119 @@ function startServer(outputBaseDir, port = 3000) {
           res.end(JSON.stringify({ success: false, error: err.message }));
         }
       });
+      return;
+    }
+
+    if (req.url === '/api/open-output-folder' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const filename = typeof data.filename === 'string' ? data.filename : '';
+          if (!filename.toLowerCase().endsWith('.pdf')) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Invalid filename' }));
+            return;
+          }
+
+          const baseName = path.basename(filename, path.extname(filename));
+          const outputDir = path.join(outputBaseDir, baseName);
+          const resolvedOutput = path.resolve(outputDir);
+          const resolvedBase = path.resolve(outputBaseDir);
+
+          if (!resolvedOutput.startsWith(resolvedBase)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Invalid output path' }));
+            return;
+          }
+
+          if (!fs.existsSync(outputDir) || !fs.statSync(outputDir).isDirectory()) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Output folder not found' }));
+            return;
+          }
+
+          let openCommand = '';
+          let openArgs = [];
+
+          if (process.platform === 'win32') {
+            openCommand = 'explorer.exe';
+            openArgs = [resolvedOutput];
+          } else if (process.platform === 'darwin') {
+            openCommand = 'open';
+            openArgs = [resolvedOutput];
+          } else {
+            openCommand = 'xdg-open';
+            openArgs = [resolvedOutput];
+          }
+
+          const opener = spawn(openCommand, openArgs, {
+            detached: true,
+            stdio: 'ignore'
+          });
+
+          opener.on('error', (openErr) => {
+            if (res.writableEnded) return;
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: `Failed to open folder via ${openCommand}: ${openErr.message}`,
+            }));
+          });
+
+          opener.unref();
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.url === '/api/upload-inputs' && req.method === 'POST') {
+      const contentType = req.headers['content-type'] || '';
+      if (!/^multipart\/form-data/i.test(contentType)) {
+        res.writeHead(415, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Expected multipart/form-data upload' }));
+        return;
+      }
+
+      if (!fs.existsSync(inputDir)) {
+        fs.mkdirSync(inputDir, { recursive: true });
+      }
+
+      parseUploadWithBusboy(req, inputDir)
+        .then(({ uploaded, skipped }) => {
+          if (uploaded.length === 0) {
+            const duplicateOnly = Array.isArray(skipped) && skipped.length > 0 && skipped.every(item => {
+              const reason = item && typeof item.reason === 'string' ? item.reason.toLowerCase() : '';
+              return reason.includes('duplicate file already exists');
+            });
+
+            const duplicateNames = duplicateOnly
+              ? skipped.map(item => item && item.name).filter(Boolean)
+              : [];
+
+            const topLevelError = duplicateOnly
+              ? ('File already exists in input/: ' + duplicateNames.join(', '))
+              : 'No valid PDF files were uploaded';
+
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: topLevelError, uploaded, skipped }));
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, uploaded, skipped }));
+        })
+        .catch(err => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: err.message || 'Upload failed' }));
+        });
       return;
     }
 
@@ -5043,6 +6497,13 @@ function startServer(outputBaseDir, port = 3000) {
       const inputFiles = fs.existsSync(inputDir) 
         ? fs.readdirSync(inputDir).filter(f => f.toLowerCase().endsWith('.pdf'))
         : [];
+      const hasOutput = hasOutputDocuments(outputBaseDir);
+
+      if (inputFiles.length === 0) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(generateIntroductionHTML(hasOutput));
+        return;
+      }
       
       // Show dashboard if we haven't processed yet or if there are new files to process
       if (inputFiles.length > 0 && !isProcessing) {
@@ -5053,6 +6514,12 @@ function startServer(outputBaseDir, port = 3000) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(generateMenuHTML(outputBaseDir));
       }
+      return;
+    }
+
+    if (req.url === '/menu') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(generateMenuHTML(outputBaseDir));
       return;
     }
     
@@ -5132,12 +6599,29 @@ function startServer(outputBaseDir, port = 3000) {
   });
   
   server.listen(port, () => {
-    console.log(`\n${'='.repeat(50)}`);
-    console.log(`Server started`);
-    console.log(`Serving files from: ${outputBaseDir}`);
-    console.log(`URL: http://localhost:${port}`);
-    console.log(`${'='.repeat(50)}`);
-    console.log(`\nPress Ctrl+C to stop the server\n`);
+    const dashboardUrl = `http://localhost:${port}`;
+    const line = '─'.repeat(62);
+    const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+    const colorize = (text, ansi) => (useColor ? `${ansi}${text}\x1b[0m` : text);
+    const cyan = (text) => colorize(text, '\x1b[36m');
+    const green = (text) => colorize(text, '\x1b[32m');
+    const yellow = (text) => colorize(text, '\x1b[33m');
+    const bold = (text) => colorize(text, '\x1b[1m');
+    const row = (text) => ('│ ' + text.padEnd(59) + '│');
+
+    console.log(`\n${cyan(`┌${line}┐`)}`);
+    console.log(cyan(row(bold('PDF Converter is running'))));
+    console.log(cyan(`├${line}┤`));
+    console.log(cyan(row(`Dashboard: ${dashboardUrl}`)));
+    console.log(cyan(row(`Output folder: ${outputBaseDir}`)));
+    console.log(cyan(`├${line}┤`));
+    console.log(cyan(row(bold('Quick Start'))));
+    console.log(green(row(`✓ 1) Open the dashboard URL in your browser`)));
+    console.log(green(row(`✓ 2) Upload PDFs (or copy them into input/)`)));
+    console.log(green(row(`✓ 3) Choose formats and click Start Processing`)));
+    console.log(green(row(`✓ 4) Use View Output to open the results folder`)));
+    console.log(cyan(`└${line}┘`));
+    console.log(`\n${yellow('Press Ctrl+C to stop the server (use command "pdf-converter" to restart).')}\n`);
   });
 }
 
