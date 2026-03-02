@@ -8,6 +8,7 @@ const Busboy = require('busboy');
 const packageInfo = require('./package.json');
 const PACKAGE_NAME = packageInfo.name || 'pdf-converter';
 const APP_VERSION = packageInfo.version || 'dev';
+const PORT_IN_USE_EXIT_CODE = 78;
 
 
 // Global state
@@ -6597,6 +6598,18 @@ function startServer(outputBaseDir, port = 3000) {
     res.writeHead(404, { 'Content-Type': 'text/html' });
     res.end('<h1>404 - Not Found</h1>');
   });
+
+    server.on('error', (error) => {
+      if (error && error.code === 'EADDRINUSE') {
+        console.error(`\n⚠ Port ${port} is already in use.`);
+        console.error('Another pdf-converter instance is likely already running.');
+        console.error('Run "pdf-converter-portclear" to free the port, then run "pdf-converter" again.\n');
+        process.exit(PORT_IN_USE_EXIT_CODE);
+        return;
+      }
+
+      throw error;
+    });
   
   server.listen(port, () => {
     const dashboardUrl = `http://localhost:${port}`;
@@ -6676,6 +6689,12 @@ function startWithAutoRestart() {
 
     childProcess.on('exit', (code, signal) => {
       if (shutdownRequested) {
+        return;
+      }
+
+      if (code === PORT_IN_USE_EXIT_CODE) {
+        shutdownRequested = true;
+        console.log('[AutoRestart] Startup stopped: port 3000 is already in use. Not restarting to avoid a loop.');
         return;
       }
 

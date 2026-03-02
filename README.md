@@ -28,6 +28,18 @@ Start server:
 pdf-converter
 ```
 
+If port `3000` is already in use:
+```bash
+pdf-converter-portclear
+pdf-converter
+```
+
+Local development equivalent:
+```bash
+npm run portclear
+npm run dev
+```
+
 Open:
 ```text
 http://localhost:3000
@@ -78,3 +90,4 @@ npm publish --access public
 - Requires Node.js `>=18.18.0`
 - If npm 2FA is enabled, publish will require OTP
 - Package exposes CLI command: `pdf-converter`
+- Package also exposes: `pdf-converter-portclear` (kills listeners on port `3000`)

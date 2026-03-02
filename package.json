@@ -4,7 +4,8 @@
   "description": "Interactive PDF conversion dashboard with HTML editing, highlights, history, and export formats",
   "main": "index.js",
   "bin": {
-    "pdf-converter": "bin/pdf-converter.js"
+    "pdf-converter": "bin/pdf-converter.js",
+    "pdf-converter-portclear": "bin/portclear.js"
   },
   "files": [
     "bin/",
@@ -22,6 +23,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
+    "portclear": "node bin/portclear.js",
     "pack:check": "npm pack --dry-run",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
