@@ -10,6 +10,68 @@ const PACKAGE_NAME = packageInfo.name || 'pdf-converter';
 const APP_VERSION = packageInfo.version || 'dev';
 const PORT_IN_USE_EXIT_CODE = 78;
 
+function hasHelpFlag(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  return args.includes('--help') || args.includes('-h');
+}
+
+function printCliHelp() {
+  console.log('pdf-converter CLI');
+  console.log('');
+  console.log('Usage:');
+  console.log('  pdf-converter');
+  console.log('  pdf-converter --port <port>');
+  console.log('  pdf-converter <port>');
+  console.log('');
+  console.log('Examples:');
+  console.log('  pdf-converter              Start the app on the default port (3000).');
+  console.log('  pdf-converter --port 3010  Start the app on a custom port (3010).');
+  console.log('  portclear                  Clear blocked default port 3000 (with confirmation).');
+  console.log('  portclear 3010 --all       Clear all listeners on port 3010.');
+  console.log('  portclear --all --yes      Clear all listeners on 3000 without prompts.');
+}
+
+function parseRequestedPort(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  let candidate = null;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = String(args[i] || '').trim();
+    if (!arg || arg === '--pdf-converter-supervisor' || arg === '--pdf-converter-child') {
+      continue;
+    }
+
+    if (arg === '--port') {
+      const next = String(args[i + 1] || '').trim();
+      if (next) {
+        candidate = next;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (arg.startsWith('--port=')) {
+      candidate = arg.slice('--port='.length).trim();
+      continue;
+    }
+
+    if (/^\d+$/.test(arg)) {
+      candidate = arg;
+    }
+  }
+
+  if (!candidate) {
+    return 3000;
+  }
+
+  const parsed = Number.parseInt(candidate, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`Invalid port "${candidate}". Use a number from 1 to 65535.`);
+  }
+
+  return parsed;
+}
+
 
 // Global state
 let isProcessing = false;
@@ -6603,7 +6665,8 @@ function startServer(outputBaseDir, port = 3000) {
       if (error && error.code === 'EADDRINUSE') {
         console.error(`\n⚠ Port ${port} is already in use.`);
         console.error('Another pdf-converter instance is likely already running.');
-        console.error('Run "pdf-converter-portclear" to free the port, then run "pdf-converter" again.\n');
+        const portclearCommand = port === 3000 ? 'portclear' : `portclear ${port}`;
+        console.error(`Run "${portclearCommand}" to free the port, then run "pdf-converter" again.\n`);
         process.exit(PORT_IN_USE_EXIT_CODE);
         return;
       }
@@ -6641,7 +6704,7 @@ function startServer(outputBaseDir, port = 3000) {
 /**
  * Main function to process all PDFs in the input folder
  */
-async function main() {
+async function main(port = 3000) {
   const inputDir = './input';
   const outputBaseDir = './output';
 
@@ -6656,10 +6719,10 @@ async function main() {
   }
 
   // Start web server - user will start processing from dashboard
-  startServer(outputBaseDir, 3000);
+  startServer(outputBaseDir, port);
 }
 
-function startWithAutoRestart() {
+function startWithAutoRestart(port = 3000) {
   const entryFile = __filename;
   const workspaceDir = path.dirname(entryFile);
   const dashboardFile = path.join(workspaceDir, 'dashboard_new.html');
@@ -6682,7 +6745,7 @@ function startWithAutoRestart() {
   }
 
   function launchChild() {
-    childProcess = spawn(process.execPath, [entryFile], {
+    childProcess = spawn(process.execPath, [entryFile, '--pdf-converter-child', '--port', String(port)], {
       stdio: 'inherit',
       env: { ...process.env, PDF_CONVERTER_CHILD: '1' },
     });
@@ -6694,7 +6757,7 @@ function startWithAutoRestart() {
 
       if (code === PORT_IN_USE_EXIT_CODE) {
         shutdownRequested = true;
-        console.log('[AutoRestart] Startup stopped: port 3000 is already in use. Not restarting to avoid a loop.');
+        console.log(`[AutoRestart] Startup stopped: port ${port} is already in use. Not restarting to avoid a loop.`);
         return;
       }
 
@@ -6796,8 +6859,22 @@ function startWithAutoRestart() {
   launchChild();
 }
 
+const cliArgs = process.argv.slice(2);
+if (process.env.PDF_CONVERTER_CHILD !== '1' && hasHelpFlag(cliArgs)) {
+  printCliHelp();
+  process.exit(0);
+}
+
+let requestedPort = 3000;
+try {
+  requestedPort = parseRequestedPort(cliArgs);
+} catch (err) {
+  console.error(err.message);
+  process.exit(1);
+}
+
 if (process.env.PDF_CONVERTER_CHILD === '1') {
-  main().catch(console.error);
+  main(requestedPort).catch(console.error);
 } else {
-  startWithAutoRestart();
+  startWithAutoRestart(requestedPort);
 }

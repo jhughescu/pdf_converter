@@ -5,6 +5,7 @@
   "main": "index.js",
   "bin": {
     "pdf-converter": "bin/pdf-converter.js",
+    "portclear": "bin/portclear.js",
     "pdf-converter-portclear": "bin/portclear.js"
   },
   "files": [

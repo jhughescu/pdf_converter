@@ -1,0 +1,63 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Calibri;}{\f1 Consolas;}}
+\fs22
+\b PDF Converter Quickstart Handout\b0\par
+\par
+\b Audience\b0\par
+Academic support professionals with strong technical skills who need a reliable local PDF conversion workflow.\par
+\par
+\b What this app does\b0\par
+Converts PDFs into multiple output formats (interactive HTML, highlighted HTML, canvas HTML, text, CSV, H5P, images) using a local browser dashboard.\par
+\par
+\b 1) Install Node.js (LTS)\b0\par
+1. Go to https://nodejs.org and install the current LTS release.\par
+2. Re-open terminal and verify:\par
+{\f1 node -v\par
+npm -v\par}
+\f0\par
+\b 2) Install PDF Converter\b0\par
+\b Preferred (global install):\b0\par
+{\f1 npm install -g @j.hughes.cu/pdf-converter\par}
+\f0\par
+\b 3) Start and use\b0\par
+Start app:\par
+{\f1 pdf-converter\par}
+\f0\par
+Open dashboard:\par
+{\f1 http://localhost:3000\par}
+\f0\par
+Workflow:\par
+\'95 Add PDFs to \f1 input/\f0  (or use upload button).\par
+\'95 Choose output formats in dashboard.\par
+\'95 Click \b Start Processing\b0 .\par
+\'95 Find results in \f1 output/<pdf-name>/\f0 .\par
+\par
+\b 4) If port 3000 is blocked (most common startup issue)\b0\par
+Symptoms: startup says port 3000 is already in use.\par
+\par
+Fix:\par
+{\f1 portclear\par
+pdf-converter\par}
+\f0\par
+\b Important:\b0  \f1 portclear\f0  terminates process(es) listening on that port. Use with care if another app is using port 3000 intentionally.\par
+\par
+You can target a different port to clear:\par
+{\f1 portclear 3001\par}
+\f0\par
+\b 5) Quick command reference\b0\par
+{\f1
+# Start app\par
+pdf-converter\par
+\par
+# Clear blocked default port\par
+portclear\par
+\par
+# Clear a specific port\par
+portclear 3000\par
+}
+\f0\par
+\b Supporting technology (high-level)\b0\par
+Node.js local server, browser dashboard UI, PDF parsing libraries, and local filesystem-based input/output folders.\par
+\par
+\i For complete setup and operational guidance, see USER_GUIDE.md in this repository.\i0\par
+}

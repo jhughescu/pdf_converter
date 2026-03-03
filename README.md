@@ -2,23 +2,15 @@
 
 Interactive PDF conversion dashboard that extracts PDF content and exports multiple formats (interactive HTML, highlighted HTML, canvas HTML, text, CSV, H5P, images).
 
+For a semi-technical setup and operations guide (including Node installation and port-clear troubleshooting), see [USER_GUIDE.md](USER_GUIDE.md).
+Word-format version: [PDF_Converter_User_Guide.rtf](PDF_Converter_User_Guide.rtf)
+
 ## Install
 
-### Local development
-```bash
-npm install
-npm run dev
-```
-
-### As a published CLI package
+### Global CLI install (recommended)
 ```bash
 npm install -g @j.hughes.cu/pdf-converter
 pdf-converter
-```
-
-Or run without global install:
-```bash
-npx @j.hughes.cu/pdf-converter
 ```
 
 ## Run
@@ -28,17 +20,43 @@ Start server:
 pdf-converter
 ```
 
+Show CLI help:
+```bash
+pdf-converter --help
+```
+
+Start on a custom port:
+```bash
+pdf-converter --port 3010
+# or
+pdf-converter 3010
+```
+
 If port `3000` is already in use:
 ```bash
-pdf-converter-portclear
+portclear
 pdf-converter
 ```
 
-Local development equivalent:
+`portclear` asks for confirmation before stopping processes. To skip prompts:
 ```bash
-npm run portclear
-npm run dev
+portclear --yes
 ```
+
+To explicitly clear all listeners on port 3000:
+```bash
+portclear --all
+```
+
+For a custom app port:
+```bash
+portclear 3010
+```
+
+If the blocked process is auto-restarted by a parent Node process, `portclear` will also stop that related parent supervisor.
+Processes that look like this app are labeled as `[pdf-converter]` in `portclear` output.
+
+Compatibility alias (still supported): `pdf-converter-portclear`
 
 Open:
 ```text
@@ -90,4 +108,4 @@ npm publish --access public
 - Requires Node.js `>=18.18.0`
 - If npm 2FA is enabled, publish will require OTP
 - Package exposes CLI command: `pdf-converter`
-- Package also exposes: `pdf-converter-portclear` (kills listeners on port `3000`)
+- Package also exposes: `portclear` and `pdf-converter-portclear` (both clear listeners on port `3000`)
