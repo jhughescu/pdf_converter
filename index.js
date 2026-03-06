@@ -1574,8 +1574,9 @@ function exportToHTML(pdfData, outputPath, outputDir, options = {}) {
     
     // Embedded images extracted from PDF
     const imageReferences = [];
+    const imagesDirName = options.imagesDirName || 'images';
     if (Array.isArray(pdfData.images) && pdfData.images.length > 0) {
-      const imagesDir = path.join(outputDir, 'images');
+      const imagesDir = path.join(outputDir, imagesDirName);
       if (!fs.existsSync(imagesDir)) {
         fs.mkdirSync(imagesDir, { recursive: true });
       }
@@ -1586,7 +1587,7 @@ function exportToHTML(pdfData, outputPath, outputDir, options = {}) {
         const buffer = Buffer.from(img.data, 'base64');
         fs.writeFileSync(imgPath, buffer);
         imageReferences.push({
-          filename: `images/${imgFileName}`,
+          filename: `${imagesDirName}/${imgFileName}`,
           page: img.page,
           width: img.width,
           height: img.height,
@@ -1966,144 +1967,25 @@ ${imageReferences.map((img, idx) => `        <div class="image-item">
       background-color: #5a6268;
       transform: translateY(-2px);
     }
-    .restore-history {
-      position: fixed;
-      bottom: 20px;
-      right: 124px;
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      background-color: #7b3fe4;
-      color: white;
-      border: none;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-      cursor: pointer;
-      font-size: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: transform 0.2s, background-color 0.2s;
-      z-index: 999;
+    .revert-btn {
+      background-color: #dc3545;
+      display: none;
     }
-    .restore-history:hover {
-      background-color: #6730c9;
-      transform: translateY(-2px);
+    .revert-btn:hover {
+      background-color: #c82333;
     }
-    .history-panel {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: 360px;
-      max-width: 90vw;
-      height: 100vh;
-      background: #ffffff;
-      border-left: 1px solid #ddd;
-      box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
-      z-index: 1200;
-      transform: translateX(100%);
-      transition: transform 0.2s ease;
-      display: flex;
-      flex-direction: column;
+    .revert-btn.visible {
+      display: inline-block;
     }
-    .history-panel.open {
-      transform: translateX(0);
+    .unmerge-btn {
+      background-color: #fd7e14;
+      display: none;
     }
-    .history-panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 14px;
-      border-bottom: 1px solid #eee;
-      background: #f8f9fa;
+    .unmerge-btn:hover {
+      background-color: #e46f0b;
     }
-    .history-panel-title {
-      margin: 0;
-      font-size: 1em;
-      color: #333;
-    }
-    .history-panel-actions {
-      display: flex;
-      gap: 6px;
-    }
-    .history-panel-btn {
-      border: 1px solid #ccc;
-      background: #fff;
-      color: #333;
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 0.8em;
-      cursor: pointer;
-    }
-    .history-panel-btn:hover {
-      background: #f0f0f0;
-    }
-    .history-panel-list {
-      list-style: none;
-      margin: 0;
-      padding: 10px;
-      overflow-y: auto;
-      flex: 1;
-    }
-    .history-entry {
-      border: 1px solid #e5e5e5;
-      border-radius: 6px;
-      padding: 10px;
-      margin-bottom: 8px;
-      background: #fafafa;
-    }
-    .history-entry-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-      gap: 8px;
-    }
-    .history-entry-version {
-      font-weight: 600;
-      color: #333;
-    }
-    .history-entry-meta {
-      font-size: 0.8em;
-      color: #666;
-    }
-    .history-entry-reason {
-      font-size: 0.85em;
-      color: #444;
-      margin-bottom: 8px;
-    }
-    .history-restore-btn {
-      border: 1px solid #7b3fe4;
-      background: #7b3fe4;
-      color: #fff;
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 0.78em;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    .history-restore-btn:hover {
-      background: #6730c9;
-      border-color: #6730c9;
-    }
-    .history-undo-merge-btn {
-      border: 1px solid #b26f00;
-      background: #ff9800;
-      color: #fff;
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 0.78em;
-      cursor: pointer;
-      white-space: nowrap;
-      margin-right: 6px;
-    }
-    .history-undo-merge-btn:hover {
-      background: #e68900;
-      border-color: #a86800;
-    }
-    .history-empty {
-      color: #666;
-      font-size: 0.9em;
-      padding: 12px;
+    .unmerge-btn.visible {
+      display: inline-block;
     }
     /* Edit Modal Styles */
     .edit-modal {
@@ -2335,19 +2217,7 @@ ${imagesHTML}
   </div>
 
   <button class="back-to-toc" id="backToToc" title="Return to links">☰</button>
-  <button class="restore-history" id="restoreHistory" title="Restore from history">↶</button>
   <button class="back-to-top" id="backToTop" title="Return to top">↑</button>
-
-  <aside id="historyPanel" class="history-panel" aria-hidden="true">
-    <div class="history-panel-header">
-      <h2 class="history-panel-title">History</h2>
-      <div class="history-panel-actions">
-        <button type="button" id="historyRefresh" class="history-panel-btn">Refresh</button>
-        <button type="button" id="historyClose" class="history-panel-btn">Close</button>
-      </div>
-    </div>
-    <ul id="historyList" class="history-panel-list"></ul>
-  </aside>
 
   <!-- Edit Modal -->
   <div id="editModal" class="edit-modal">
@@ -2373,9 +2243,13 @@ ${imagesHTML}
 
   <script>
     const DOCUMENT_KEY = ${JSON.stringify(documentKey)};
-    // Storage key for edits - unique per document based on title
-    const STORAGE_KEY = 'pdf-text-edits-' + document.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-    const MERGE_KEY = 'pdf-block-merges-' + document.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    const DOCUMENT_BUILD_ID = ${JSON.stringify(compiledAt)};
+    // Storage keys scoped per output document key
+    const STORAGE_KEY = 'pdf-text-edits-' + DOCUMENT_KEY;
+    const MERGE_KEY = 'pdf-block-merges-' + DOCUMENT_KEY;
+    const ORIGINAL_KEY = 'pdf-original-blocks-' + DOCUMENT_KEY;
+    const UNMERGE_KEY = 'pdf-unmerge-meta-' + DOCUMENT_KEY;
+    const BUILD_KEY = 'pdf-doc-build-' + DOCUMENT_KEY;
     let persistedVersion = 0;
     let saveQueue = Promise.resolve();
     let currentEditingBlock = null;
@@ -2499,181 +2373,164 @@ ${imagesHTML}
       return saveQueue;
     }
 
-    async function fetchHistoryEntries() {
-      const historyRes = await fetch('/api/document-history/' + encodeURIComponent(DOCUMENT_KEY));
-      const historyData = await historyRes.json();
-      if (!historyRes.ok || !historyData.success) {
-        throw new Error((historyData && historyData.error) || 'Failed to load history');
-      }
-      return Array.isArray(historyData.history) ? historyData.history : [];
+    function clearLocalEditCache() {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(MERGE_KEY);
+      localStorage.removeItem(ORIGINAL_KEY);
+      localStorage.removeItem(UNMERGE_KEY);
     }
 
-    async function restoreVersion(targetVersion) {
-      const restoreRes = await fetch('/api/document-state/' + encodeURIComponent(DOCUMENT_KEY) + '/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: targetVersion }),
-      });
-      const restoreData = await restoreRes.json();
-
-      if (!restoreRes.ok || !restoreData.success || !restoreData.state) {
-        throw new Error((restoreData && restoreData.error) || 'Restore failed');
-      }
-
-      persistedVersion = restoreData.state.version || persistedVersion;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(restoreData.state.edits || {}));
-      localStorage.setItem(MERGE_KEY, JSON.stringify(restoreData.state.merges || []));
-      return restoreData.state;
-    }
-
-    function closeHistoryPanel() {
-      const panel = document.getElementById('historyPanel');
-      if (panel) {
-        panel.classList.remove('open');
-        panel.setAttribute('aria-hidden', 'true');
+    function ensureLocalCacheMatchesBuild() {
+      const previousBuild = localStorage.getItem(BUILD_KEY);
+      if (previousBuild !== DOCUMENT_BUILD_ID) {
+        clearLocalEditCache();
+        localStorage.setItem(BUILD_KEY, DOCUMENT_BUILD_ID);
       }
     }
 
-    async function renderHistoryPanel() {
-      const list = document.getElementById('historyList');
-      if (!list) return;
-      list.innerHTML = '<li class="history-empty">Loading history...</li>';
+    function hasBlockChangedFromOriginal(block) {
+      const contentEl = getPrimaryContentElement(block);
+      if (!contentEl) return false;
+      const originalHtml = block.dataset.originalContentHtml || '';
+      return contentEl.innerHTML.trim() !== originalHtml.trim();
+    }
 
+    function updateRevertButtonVisibility(block) {
+      const revertBtn = block.querySelector('.revert-btn');
+      if (!revertBtn) return;
+      if (hasBlockChangedFromOriginal(block)) {
+        revertBtn.classList.add('visible');
+      } else {
+        revertBtn.classList.remove('visible');
+      }
+    }
+
+    function getStoredUnmergeMap() {
+      return JSON.parse(localStorage.getItem(UNMERGE_KEY) || '{}');
+    }
+
+    function saveStoredUnmergeMap(map) {
+      localStorage.setItem(UNMERGE_KEY, JSON.stringify(map));
+    }
+
+    function updateUnmergeButtonVisibility(block) {
+      const unmergeBtn = block.querySelector('.unmerge-btn');
+      if (!unmergeBtn) return;
+      if (block.dataset.unmergeMeta) {
+        unmergeBtn.classList.add('visible');
+      } else {
+        unmergeBtn.classList.remove('visible');
+      }
+    }
+
+    function getUnmergeDepth(meta) {
+      if (!meta || typeof meta !== 'object') {
+        return 0;
+      }
+
+      const sourceDepth = getUnmergeDepth(meta.sourceMeta);
+      const targetDepth = getUnmergeDepth(meta.targetMeta);
+      return 1 + Math.max(sourceDepth, targetDepth);
+    }
+
+    function updateUnmergeButtonLabel(block) {
+      const unmergeBtn = block.querySelector('.unmerge-btn');
+      if (!unmergeBtn) return;
+
+      if (!block.dataset.unmergeMeta) {
+        unmergeBtn.textContent = 'Unmerge';
+        return;
+      }
+
+      let meta = null;
       try {
-        const history = await fetchHistoryEntries();
-        list.innerHTML = '';
+        meta = JSON.parse(block.dataset.unmergeMeta);
+      } catch (_err) {
+        meta = null;
+      }
 
-        if (history.length === 0) {
-          list.innerHTML = '<li class="history-empty">No history entries yet.</li>';
+      const depth = getUnmergeDepth(meta);
+      unmergeBtn.textContent = depth > 0 ? ('Unmerge (' + depth + ')') : 'Unmerge';
+    }
+
+    function persistUnmergeMetadataFromDom() {
+      const map = {};
+      const editableBlocks = document.querySelectorAll('.content-block.editable');
+      editableBlocks.forEach((block, editableIndex) => {
+        if (!block.dataset.unmergeMeta) return;
+        try {
+          map[editableIndex] = JSON.parse(block.dataset.unmergeMeta);
+        } catch (_err) {
+          // Ignore malformed metadata entries
+        }
+      });
+      saveStoredUnmergeMap(map);
+    }
+
+    function applyStoredUnmergeMetadataToBlocks() {
+      const map = getStoredUnmergeMap();
+      const editableBlocks = document.querySelectorAll('.content-block.editable');
+      editableBlocks.forEach((block, editableIndex) => {
+        if (Object.prototype.hasOwnProperty.call(map, editableIndex)) {
+          block.dataset.unmergeMeta = JSON.stringify(map[editableIndex]);
         } else {
-          history.forEach(entry => {
-            const li = document.createElement('li');
-            li.className = 'history-entry';
+          delete block.dataset.unmergeMeta;
+        }
+        updateUnmergeButtonLabel(block);
+        updateUnmergeButtonVisibility(block);
+      });
+    }
 
-            const top = document.createElement('div');
-            top.className = 'history-entry-top';
+    function captureBaselineMapFromCurrentDom() {
+      const baseline = {};
+      const blocks = document.querySelectorAll('.content-block');
+      let editableIndex = 0;
 
-            const version = document.createElement('span');
-            version.className = 'history-entry-version';
-            version.textContent = 'Version ' + entry.version;
+      blocks.forEach(block => {
+        if (block.querySelector('.toc-link')) return;
+        const contentEl = getPrimaryContentElement(block);
+        if (contentEl) {
+          baseline[editableIndex] = contentEl.innerHTML;
+        }
+        editableIndex += 1;
+      });
 
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'history-restore-btn';
-            btn.textContent = 'Restore';
+      return baseline;
+    }
 
-            const isMergeEntry = (entry.reason || '').toLowerCase() === 'merge';
-            if (isMergeEntry && Number.isInteger(entry.version) && entry.version > 0) {
-              const undoBtn = document.createElement('button');
-              undoBtn.type = 'button';
-              undoBtn.className = 'history-undo-merge-btn';
-              undoBtn.textContent = 'Undo Merge';
-              undoBtn.addEventListener('click', async function() {
-                const targetVersion = entry.version - 1;
-                if (!confirm('Undo this merge by restoring to version ' + targetVersion + '?')) return;
-                try {
-                  undoBtn.disabled = true;
-                  btn.disabled = true;
-                  await restoreVersion(targetVersion);
-                  alert('Merge undone. Reloading page.');
-                  window.location.reload();
-                } catch (err) {
-                  alert('Undo merge failed: ' + err.message);
-                } finally {
-                  undoBtn.disabled = false;
-                  btn.disabled = false;
-                }
-              });
-              top.appendChild(undoBtn);
-            }
+    function getStoredOriginalMap() {
+      return JSON.parse(localStorage.getItem(ORIGINAL_KEY) || '{}');
+    }
 
-            btn.addEventListener('click', async function() {
-              if (!confirm('Restore to version ' + entry.version + '?')) return;
-              try {
-                btn.disabled = true;
-                await restoreVersion(entry.version);
-                alert('Restored to version ' + entry.version + '. Reloading page.');
-                window.location.reload();
-              } catch (err) {
-                alert('Restore failed: ' + err.message);
-              } finally {
-                btn.disabled = false;
-              }
-            });
+    function saveStoredOriginalMap(map) {
+      localStorage.setItem(ORIGINAL_KEY, JSON.stringify(map));
+    }
 
-            top.appendChild(version);
-            top.appendChild(btn);
+    function syncOriginalMapToCurrentStructure() {
+      const baseline = captureBaselineMapFromCurrentDom();
+      saveStoredOriginalMap(baseline);
+      return baseline;
+    }
 
-            const reason = document.createElement('div');
-            reason.className = 'history-entry-reason';
-            reason.textContent = entry.reason || 'save';
+    function refreshEditableBlockMetadata() {
+      const storedOriginals = getStoredOriginalMap();
+      const editableBlocks = document.querySelectorAll('.content-block.editable');
+      editableBlocks.forEach((block, editableIndex) => {
+        block.dataset.editableIndex = String(editableIndex);
 
-            const meta = document.createElement('div');
-            meta.className = 'history-entry-meta';
-            const stamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'unknown time';
-            meta.textContent = stamp + ' • edits: ' + (entry.editsCount || 0) + ' • merges: ' + (entry.mergeCount || 0);
+        const contentEl = getPrimaryContentElement(block);
+        if (!contentEl) return;
 
-            li.appendChild(top);
-            li.appendChild(reason);
-            li.appendChild(meta);
-            list.appendChild(li);
-          });
+        if (Object.prototype.hasOwnProperty.call(storedOriginals, editableIndex)) {
+          block.dataset.originalContentHtml = storedOriginals[editableIndex];
+        } else {
+          block.dataset.originalContentHtml = contentEl.innerHTML;
         }
 
-        const originalItem = document.createElement('li');
-        originalItem.className = 'history-entry';
-
-        const originalTop = document.createElement('div');
-        originalTop.className = 'history-entry-top';
-
-        const originalVersion = document.createElement('span');
-        originalVersion.className = 'history-entry-version';
-        originalVersion.textContent = 'Original state';
-
-        const originalBtn = document.createElement('button');
-        originalBtn.type = 'button';
-        originalBtn.className = 'history-restore-btn';
-        originalBtn.textContent = 'Restore';
-        originalBtn.addEventListener('click', async function() {
-          if (!confirm('Restore to the original unedited state?')) return;
-          try {
-            originalBtn.disabled = true;
-            await restoreVersion(0);
-            alert('Restored to original state. Reloading page.');
-            window.location.reload();
-          } catch (err) {
-            alert('Restore failed: ' + err.message);
-          } finally {
-            originalBtn.disabled = false;
-          }
-        });
-
-        originalTop.appendChild(originalVersion);
-        originalTop.appendChild(originalBtn);
-
-        const originalReason = document.createElement('div');
-        originalReason.className = 'history-entry-reason';
-        originalReason.textContent = 'Base output (no edits or merges)';
-
-        const originalMeta = document.createElement('div');
-        originalMeta.className = 'history-entry-meta';
-        originalMeta.textContent = 'Version 0 • edits: 0 • merges: 0';
-
-        originalItem.appendChild(originalTop);
-        originalItem.appendChild(originalReason);
-        originalItem.appendChild(originalMeta);
-        list.appendChild(originalItem);
-      } catch (err) {
-        list.innerHTML = '<li class="history-empty">Failed to load history: ' + err.message + '</li>';
-      }
-    }
-
-    async function restoreFromHistory() {
-      const panel = document.getElementById('historyPanel');
-      if (!panel) return;
-      panel.classList.add('open');
-      panel.setAttribute('aria-hidden', 'false');
-      await renderHistoryPanel();
+        updateRevertButtonVisibility(block);
+        updateUnmergeButtonLabel(block);
+        updateUnmergeButtonVisibility(block);
+      });
     }
     
     // Reconstruct merged blocks from storage
@@ -2700,6 +2557,8 @@ ${imagesHTML}
     
     // Load edits from persisted state (server-backed with local fallback)
     async function loadEdits() {
+      ensureLocalCacheMatchesBuild();
+
       let edits = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
       let merges = JSON.parse(localStorage.getItem(MERGE_KEY) || '[]');
 
@@ -2718,6 +2577,9 @@ ${imagesHTML}
       }
 
       reconstructMergedBlocks(merges);
+      if (!localStorage.getItem(ORIGINAL_KEY)) {
+        syncOriginalMapToCurrentStructure();
+      }
       const blocks = document.querySelectorAll('.content-block');
       let editableIndex = 0;
       blocks.forEach(block => {
@@ -2823,32 +2685,6 @@ ${imagesHTML}
           window.scrollTo({ top: 0, behavior: 'smooth' });
         });
       }
-      const restoreHistory = document.getElementById('restoreHistory');
-      if (restoreHistory) {
-        restoreHistory.addEventListener('click', function() {
-          restoreFromHistory();
-        });
-      }
-      const historyClose = document.getElementById('historyClose');
-      if (historyClose) {
-        historyClose.addEventListener('click', function() {
-          closeHistoryPanel();
-        });
-      }
-      const historyRefresh = document.getElementById('historyRefresh');
-      if (historyRefresh) {
-        historyRefresh.addEventListener('click', function() {
-          renderHistoryPanel();
-        });
-      }
-      document.addEventListener('click', function(e) {
-        const panel = document.getElementById('historyPanel');
-        const trigger = document.getElementById('restoreHistory');
-        if (!panel || !panel.classList.contains('open')) return;
-        if (panel.contains(e.target)) return;
-        if (trigger && (trigger === e.target || trigger.contains(e.target))) return;
-        closeHistoryPanel();
-      });
 
       // Load any saved edits
       await loadEdits();
@@ -2887,19 +2723,18 @@ ${imagesHTML}
         return container.innerHTML.trim();
       }
       
-      // Add copy and edit buttons to all content blocks
-      const blocks = document.querySelectorAll('.content-block');
-      blocks.forEach((block, index) => {
-        if (block.querySelector('.toc-link')) {
-          block.classList.add('toc-block');
-          return;
-        }
+      function addControlsToEditableBlock(block) {
         block.classList.add('editable');
-        
+
+        const existingControls = block.querySelector('.block-buttons');
+        if (existingControls) {
+          existingControls.remove();
+        }
+
         // Create button container
         const buttonContainer = document.createElement('div');
         buttonContainer.className = 'block-buttons';
-        
+
         // Add copy button
         const copyBtn = document.createElement('button');
         copyBtn.className = 'copy-btn';
@@ -2920,7 +2755,7 @@ ${imagesHTML}
           });
         });
         buttonContainer.appendChild(copyBtn);
-        
+
         // Add copy HTML button
         const copyHtmlBtn = document.createElement('button');
         copyHtmlBtn.className = 'copy-btn copy-html-btn';
@@ -2943,7 +2778,7 @@ ${imagesHTML}
           });
         });
         buttonContainer.appendChild(copyHtmlBtn);
-        
+
         // Add edit button
         const editBtn = document.createElement('button');
         editBtn.className = 'edit-btn';
@@ -2953,21 +2788,116 @@ ${imagesHTML}
           openEditModal(block);
         });
         buttonContainer.appendChild(editBtn);
-        
+
+        // Add revert button (shown only when this block was edited)
+        const revertBtn = document.createElement('button');
+        revertBtn.className = 'copy-btn revert-btn';
+        revertBtn.textContent = 'Revert';
+        revertBtn.title = 'Revert this block to the original extracted text and remove ALL of your edits for this block.';
+        revertBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const confirmed = confirm('Revert this block to its original extracted text? This will remove ALL of your edits for this block.');
+          if (!confirmed) return;
+          const para = getPrimaryContentElement(block);
+          if (!para) return;
+          para.innerHTML = block.dataset.originalContentHtml || '';
+          updateRevertButtonVisibility(block);
+          saveEditsToStorage('revert');
+        });
+        buttonContainer.appendChild(revertBtn);
+
+        // Add unmerge button (shown only when this block was merged)
+        const unmergeBtn = document.createElement('button');
+        unmergeBtn.className = 'copy-btn unmerge-btn';
+        unmergeBtn.textContent = 'Unmerge';
+        unmergeBtn.title = 'Split this merged block back into the two original blocks.';
+        unmergeBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+
+          if (!block.dataset.unmergeMeta) return;
+          let meta;
+          try {
+            meta = JSON.parse(block.dataset.unmergeMeta);
+          } catch (_err) {
+            return;
+          }
+
+          const confirmed = confirm('Unmerge this block? It will be split back into the two original blocks.');
+          if (!confirmed) return;
+
+          const targetContent = getPrimaryContentElement(block);
+          if (!targetContent) return;
+
+          const allowedTags = new Set(['p', 'h2', 'h3', 'h4']);
+          const sourceTag = allowedTags.has(meta.sourceTag) ? meta.sourceTag : 'p';
+          const sourceMeta = (meta.sourceMeta && typeof meta.sourceMeta === 'object') ? meta.sourceMeta : null;
+          const targetMeta = (meta.targetMeta && typeof meta.targetMeta === 'object') ? meta.targetMeta : null;
+
+          const sourceBlock = document.createElement('div');
+          sourceBlock.className = 'content-block editable';
+          const sourcePrimary = document.createElement(sourceTag);
+          sourcePrimary.innerHTML = typeof meta.sourceHtml === 'string' ? meta.sourceHtml : '';
+          sourceBlock.appendChild(sourcePrimary);
+
+          if (sourceMeta) {
+            sourceBlock.dataset.unmergeMeta = JSON.stringify(sourceMeta);
+          } else {
+            delete sourceBlock.dataset.unmergeMeta;
+          }
+
+          targetContent.innerHTML = typeof meta.targetHtml === 'string' ? meta.targetHtml : '';
+
+          if (targetMeta) {
+            block.dataset.unmergeMeta = JSON.stringify(targetMeta);
+          } else {
+            delete block.dataset.unmergeMeta;
+          }
+          updateUnmergeButtonLabel(block);
+
+          if (meta.sourceWasBefore) {
+            block.parentNode.insertBefore(sourceBlock, block);
+          } else {
+            block.parentNode.insertBefore(sourceBlock, block.nextSibling);
+          }
+
+          addControlsToEditableBlock(sourceBlock);
+
+          const merges = JSON.parse(localStorage.getItem(MERGE_KEY) || '[]');
+          const sourceDomIndex = Number.isInteger(meta.sourceDomIndex) ? meta.sourceDomIndex : null;
+          const targetDomIndex = Number.isInteger(meta.targetDomIndex) ? meta.targetDomIndex : null;
+          if (sourceDomIndex !== null && targetDomIndex !== null) {
+            for (let i = merges.length - 1; i >= 0; i -= 1) {
+              const item = merges[i];
+              if (Array.isArray(item) && item[0] === sourceDomIndex && item[1] === targetDomIndex) {
+                merges.splice(i, 1);
+                break;
+              }
+            }
+            localStorage.setItem(MERGE_KEY, JSON.stringify(merges));
+          }
+
+          persistUnmergeMetadataFromDom();
+          refreshEditableBlockMetadata();
+          syncOriginalMapToCurrentStructure();
+          saveEditsToStorage('unmerge');
+          updateMergeButtonStates();
+        });
+        buttonContainer.appendChild(unmergeBtn);
+
         // Add merge button
         const mergeBtn = document.createElement('button');
         mergeBtn.className = 'copy-btn merge-btn';
         mergeBtn.textContent = 'Merge';
         mergeBtn.addEventListener('click', function(e) {
           e.stopPropagation();
-          
+
           // Prevent clicking disabled merge buttons
           if (mergeBtn.disabled) return;
-          
+
           // If no source block selected, make this one the source
           if (mergeSourceBlock === null) {
             mergeSourceBlock = block;
-            mergeSourceIndex = index;
+            mergeSourceIndex = getEditableBlocksArray().indexOf(block);
             block.classList.add('merge-source');
             mergeBtn.classList.add('active');
             mergeBtn.textContent = 'Merge with...';
@@ -2988,12 +2918,28 @@ ${imagesHTML}
             const sourceContent = getPrimaryContentElement(mergeSourceBlock);
             const targetContent = getPrimaryContentElement(block);
             if (sourceContent && targetContent) {
-              targetContent.innerHTML += ' ' + sourceContent.innerHTML;
+              const parseMeta = raw => {
+                if (!raw) return null;
+                try {
+                  const parsed = JSON.parse(raw);
+                  return parsed && typeof parsed === 'object' ? parsed : null;
+                } catch (_err) {
+                  return null;
+                }
+              };
+
+              const targetBeforeMergeHtml = targetContent.innerHTML;
+              const sourceBeforeMergeHtml = sourceContent.innerHTML;
+              const sourceTag = sourceContent.tagName.toLowerCase();
+              const sourceMeta = parseMeta(mergeSourceBlock.dataset.unmergeMeta);
+              const targetMeta = parseMeta(block.dataset.unmergeMeta);
+
+              targetContent.innerHTML += ' ' + sourceBeforeMergeHtml;
               const oldMergeSourceBtn = mergeSourceBlock.querySelector('.merge-btn');
               mergeSourceBlock.classList.remove('merge-source');
               if (oldMergeSourceBtn) oldMergeSourceBtn.classList.remove('active');
               if (oldMergeSourceBtn) oldMergeSourceBtn.textContent = 'Merge';
-              
+
               // Store merge operation
               const merges = JSON.parse(localStorage.getItem(MERGE_KEY) || '[]');
               const allBlocks = Array.from(document.querySelectorAll('.content-block'));
@@ -3003,26 +2949,59 @@ ${imagesHTML}
                 merges.push([sourceDomIndex, targetDomIndex]);
               }
               localStorage.setItem(MERGE_KEY, JSON.stringify(merges));
-              
+
               // Remove source block
               mergeSourceBlock.remove();
-              
+
+              block.dataset.unmergeMeta = JSON.stringify({
+                sourceHtml: sourceBeforeMergeHtml,
+                targetHtml: targetBeforeMergeHtml,
+                sourceTag,
+                sourceWasBefore: sourceDomIndex < targetDomIndex,
+                sourceDomIndex,
+                targetDomIndex,
+                sourceMeta,
+                targetMeta,
+              });
+              updateUnmergeButtonLabel(block);
+              updateUnmergeButtonVisibility(block);
+
+              // Treat merged structure as new baseline for per-block revert behavior
+              syncOriginalMapToCurrentStructure();
+              persistUnmergeMetadataFromDom();
+
               // Update edits storage (re-index after removal)
               saveEditsToStorage('merge');
-              
+
               // Reset merge state
               mergeSourceBlock = null;
               mergeSourceIndex = null;
               mergeBtn.classList.remove('active');
               mergeBtn.textContent = 'Merge';
+              refreshEditableBlockMetadata();
               updateMergeButtonStates();
             }
           }
         });
         buttonContainer.appendChild(mergeBtn);
-        
+
         block.appendChild(buttonContainer);
+        updateRevertButtonVisibility(block);
+        updateUnmergeButtonLabel(block);
+        updateUnmergeButtonVisibility(block);
+      }
+
+      // Add copy/edit/revert/merge controls to all content blocks
+      const blocks = document.querySelectorAll('.content-block');
+      blocks.forEach(block => {
+        if (block.querySelector('.toc-link')) {
+          block.classList.add('toc-block');
+          return;
+        }
+        addControlsToEditableBlock(block);
       });
+      refreshEditableBlockMetadata();
+      applyStoredUnmergeMetadataToBlocks();
       
       // Modal event listeners
       const modal = document.getElementById('editModal');
@@ -3048,6 +3027,7 @@ ${imagesHTML}
           const para = getPrimaryContentElement(currentEditingBlock);
           if (para) {
             para.innerHTML = editor.innerHTML;
+            updateRevertButtonVisibility(currentEditingBlock);
             saveEditsToStorage('edit');
           }
         }
@@ -3538,13 +3518,45 @@ ${contentHTML}
   }
 }
 
+function formatTimestampSuffix(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return '_' + date.getFullYear() + pad(date.getMonth() + 1) + pad(date.getDate()) + '_' + pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds());
+}
+
+function buildOutputTargets(outputSubDir, baseName, suffix = '') {
+  return {
+    text: path.join(outputSubDir, `${baseName}${suffix}.txt`),
+    editedText: path.join(outputSubDir, `${baseName}${suffix}_edited.txt`),
+    html: path.join(outputSubDir, `${baseName}${suffix}.html`),
+    highlighted: path.join(outputSubDir, `${baseName}_highlighted${suffix}.html`),
+    canvas: path.join(outputSubDir, `${baseName}_canvas${suffix}.html`),
+    csv: path.join(outputSubDir, `${baseName}${suffix}.csv`),
+    h5p: path.join(outputSubDir, `${baseName}_content${suffix}.json`),
+    imagesDir: path.join(outputSubDir, `images${suffix}`),
+  };
+}
+
+function selectedFormatsWouldOverwrite(outputSubDir, baseName, formatOptions) {
+  const defaultTargets = buildOutputTargets(outputSubDir, baseName, '');
+  if (formatOptions.text && fs.existsSync(defaultTargets.text)) return true;
+  if (formatOptions.editedText && fs.existsSync(defaultTargets.editedText)) return true;
+  if (formatOptions.html && fs.existsSync(defaultTargets.html)) return true;
+  if (formatOptions.htmlHighlighted && fs.existsSync(defaultTargets.highlighted)) return true;
+  if (formatOptions.canvas && fs.existsSync(defaultTargets.canvas)) return true;
+  if (formatOptions.csv && fs.existsSync(defaultTargets.csv)) return true;
+  if (formatOptions.h5p && fs.existsSync(defaultTargets.h5p)) return true;
+  if ((formatOptions.html || formatOptions.htmlHighlighted || formatOptions.images) && fs.existsSync(defaultTargets.imagesDir)) return true;
+  return false;
+}
+
 /**
  * Process a single PDF file and export in multiple formats
  * @param {string} pdfPath - Path to the PDF file
  * @param {string} outputSubDir - Output subdirectory for this PDF
  * @param {Object} formats - Format selection options (all default to true)
+ * @param {Object} processingOptions - Run-level processing options
  */
-async function processPDF(pdfPath, outputSubDir, formats = {}) {
+async function processPDF(pdfPath, outputSubDir, formats = {}, processingOptions = {}) {
   // Default all formats to true if not specified
   const formatOptions = {
     text: formats.text !== false,
@@ -3576,16 +3588,48 @@ async function processPDF(pdfPath, outputSubDir, formats = {}) {
 
   // Export in multiple formats based on selection
   const baseName = path.basename(pdfPath, path.extname(pdfPath));
+  const preserveExistingOutputs = processingOptions.preserveExistingOutputs === true;
+  const runTimestampSuffix = preserveExistingOutputs
+    ? (typeof processingOptions.timestampSuffix === 'string' && processingOptions.timestampSuffix.trim().length > 0
+      ? processingOptions.timestampSuffix.trim()
+      : formatTimestampSuffix())
+    : '';
+  const useTimestampSuffix = preserveExistingOutputs && selectedFormatsWouldOverwrite(outputSubDir, baseName, formatOptions);
+  const outputSuffix = useTimestampSuffix ? runTimestampSuffix : '';
+  const outputTargets = buildOutputTargets(outputSubDir, baseName, outputSuffix);
+  const imagesDirName = useTimestampSuffix ? `images${runTimestampSuffix}` : 'images';
+  const willOverwriteInteractiveHtml = formatOptions.html && !useTimestampSuffix;
+  if (useTimestampSuffix) {
+    console.log(`[ProcessPDF] Preserve mode active for ${baseName}. Writing new outputs with suffix ${runTimestampSuffix}`);
+  }
+
+  if (willOverwriteInteractiveHtml) {
+    const editsFilePath = path.join(outputSubDir, 'edits.json');
+    const historyFilePath = path.join(outputSubDir, 'edits.history.jsonl');
+    try {
+      if (fs.existsSync(editsFilePath)) {
+        fs.unlinkSync(editsFilePath);
+      }
+      if (fs.existsSync(historyFilePath)) {
+        fs.unlinkSync(historyFilePath);
+      }
+      console.log(`[ProcessPDF] Cleared persisted edit records for ${baseName} before overwrite.`);
+    } catch (clearErr) {
+      console.warn(`[ProcessPDF] Could not clear persisted edit records for ${baseName}: ${clearErr.message}`);
+    }
+  }
+
   let exportFailed = false;
   
   try {
-    if (formatOptions.text && !exportToText(pdfData, path.join(outputSubDir, `${baseName}.txt`))) exportFailed = true;
-    if (formatOptions.editedText && !exportToEditedText(pdfData, path.join(outputSubDir, `${baseName}_edited.txt`))) exportFailed = true;
+    if (formatOptions.text && !exportToText(pdfData, outputTargets.text)) exportFailed = true;
+    if (formatOptions.editedText && !exportToEditedText(pdfData, outputTargets.editedText)) exportFailed = true;
     if (formatOptions.html) {
-      const htmlPath = path.join(outputSubDir, `${baseName}.html`);
+      const htmlPath = outputTargets.html;
       console.log('[ProcessPDF] Exporting interactive HTML to:', htmlPath);
       const htmlOk = exportToHTML(pdfData, htmlPath, outputSubDir, {
         superSubSensitivity: formatOptions.superSubSensitivity,
+        imagesDirName,
       });
       const htmlExists = fs.existsSync(htmlPath);
       console.log('[ProcessPDF] Interactive HTML exists:', htmlExists);
@@ -3594,10 +3638,11 @@ async function processPDF(pdfPath, outputSubDir, formats = {}) {
       console.log('[ProcessPDF] Skipping interactive HTML export.');
     }
     if (formatOptions.htmlHighlighted) {
-      const highlightedPath = path.join(outputSubDir, `${baseName}_highlighted.html`);
+      const highlightedPath = outputTargets.highlighted;
       console.log('[ProcessPDF] Exporting highlighted HTML to:', highlightedPath);
       const highlightedOk = exportToHighlightedHTML(pdfData, highlightedPath, outputSubDir, {
         superSubSensitivity: formatOptions.superSubSensitivity,
+        imagesDirName,
       });
       const highlightedExists = fs.existsSync(highlightedPath);
       console.log('[ProcessPDF] Highlighted HTML exists:', highlightedExists);
@@ -3605,11 +3650,11 @@ async function processPDF(pdfPath, outputSubDir, formats = {}) {
     } else {
       console.log('[ProcessPDF] Skipping highlighted HTML export.');
     }
-    if (formatOptions.canvas && !exportToCanvasHTML(pdfData, path.join(outputSubDir, `${baseName}_canvas.html`), {
+    if (formatOptions.canvas && !exportToCanvasHTML(pdfData, outputTargets.canvas, {
       superSubSensitivity: formatOptions.superSubSensitivity,
     })) exportFailed = true;
-    if (formatOptions.csv && !exportToCSV(pdfData, path.join(outputSubDir, `${baseName}.csv`))) exportFailed = true;
-    if (formatOptions.h5p && !exportToH5P(pdfData, path.join(outputSubDir, `${baseName}_content.json`))) exportFailed = true;
+    if (formatOptions.csv && !exportToCSV(pdfData, outputTargets.csv)) exportFailed = true;
+    if (formatOptions.h5p && !exportToH5P(pdfData, outputTargets.h5p)) exportFailed = true;
   } catch (err) {
     console.error(`Error during export:`, err.message);
     console.error(err.stack);
@@ -4418,33 +4463,53 @@ function generateDashboardHTML(inputFiles, processing) {
 
     function addViewOutputButton(checkbox, filename) {
       let viewBtn = checkbox.parentElement.querySelector('.view-output-btn');
+      let browserBtn = checkbox.parentElement.querySelector('.view-browser-btn');
       let deleteBtn = checkbox.parentElement.querySelector('.delete-output-btn');
-      if (viewBtn && deleteBtn) return; // Already exists
+      if (viewBtn && browserBtn && deleteBtn) return; // Already exists
       
-      viewBtn = document.createElement('button');
-      viewBtn.className = 'view-output-btn';
-      viewBtn.textContent = 'View in OS';
-      viewBtn.type = 'button';
-      viewBtn.style.cssText = 'background: #1f6feb; color: white; border: 1px solid #1f6feb; border-radius: 4px; padding: 4px 10px; font-size: 0.85em; cursor: pointer; margin-left: 8px;';
-      viewBtn.onclick = async (e) => {
-        e.preventDefault();
-        try {
-          const response = await fetch('/api/open-output-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: filename })
-          });
-          const data = await response.json();
-          if (!response.ok || !data.success) {
-            throw new Error((data && data.error) || 'Failed to open output folder');
+      if (!viewBtn) {
+        viewBtn = document.createElement('button');
+        viewBtn.className = 'view-output-btn';
+        viewBtn.textContent = 'View in OS';
+        viewBtn.type = 'button';
+        viewBtn.style.cssText = 'background: #1f6feb; color: white; border: 1px solid #1f6feb; border-radius: 4px; padding: 4px 10px; font-size: 0.85em; cursor: pointer; margin-left: 8px;';
+        viewBtn.onclick = async (e) => {
+          e.preventDefault();
+          try {
+            const response = await fetch('/api/open-output-folder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ filename: filename })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+              throw new Error((data && data.error) || 'Failed to open output folder');
+            }
+          } catch (err) {
+            alert('Open folder failed: ' + err.message);
           }
-        } catch (err) {
-          alert('Open folder failed: ' + err.message);
-        }
-      };
-      viewBtn.onmouseover = () => viewBtn.style.background = '#388bfd';
-      viewBtn.onmouseout = () => viewBtn.style.background = '#1f6feb';
-      checkbox.parentElement.appendChild(viewBtn);
+        };
+        viewBtn.onmouseover = () => viewBtn.style.background = '#388bfd';
+        viewBtn.onmouseout = () => viewBtn.style.background = '#1f6feb';
+        checkbox.parentElement.appendChild(viewBtn);
+      }
+
+      if (!browserBtn) {
+        browserBtn = document.createElement('button');
+        browserBtn.className = 'view-browser-btn';
+        browserBtn.textContent = 'Show in browser';
+        browserBtn.type = 'button';
+        browserBtn.style.cssText = 'background: #238636; color: white; border: 1px solid #238636; border-radius: 4px; padding: 4px 10px; font-size: 0.85em; cursor: pointer; margin-left: 8px;';
+        browserBtn.onclick = (e) => {
+          e.preventDefault();
+          const docKey = filename.replace(/\.pdf$/i, '');
+          const menuUrl = '/menu?file=' + encodeURIComponent(docKey);
+          window.open(menuUrl, '_blank', 'noopener');
+        };
+        browserBtn.onmouseover = () => browserBtn.style.background = '#2ea043';
+        browserBtn.onmouseout = () => browserBtn.style.background = '#238636';
+        checkbox.parentElement.appendChild(browserBtn);
+      }
 
       if (!deleteBtn) {
         deleteBtn = document.createElement('button');
@@ -4477,6 +4542,7 @@ function generateDashboardHTML(inputFiles, processing) {
             .then(data => {
               if (data.success) {
                 if (viewBtn && viewBtn.parentElement) viewBtn.remove();
+                if (browserBtn && browserBtn.parentElement) browserBtn.remove();
                 if (deleteBtn && deleteBtn.parentElement) deleteBtn.remove();
                 alert('Outputs deleted for ' + filename);
               } else {
@@ -4631,6 +4697,7 @@ function generateDashboardHTML(inputFiles, processing) {
       const selectedFiles = getSelectedFiles();
       const selectedFormatKeys = getSelectedFormatKeysForOverwrite();
       const overwritingFiles = selectedFiles.filter(name => fileWouldOverwriteSelectedFormats(name, selectedFormatKeys));
+      let overwriteBehavior = 'overwrite';
       const fileCount = selectedFiles.length;
       
       if (fileCount === 0) {
@@ -4642,7 +4709,28 @@ function generateDashboardHTML(inputFiles, processing) {
       if (overwritingFiles.length > 0) {
         const fileMessages = buildOverwriteFileMessages(overwritingFiles, selectedFormatKeys, 5).join('\\n');
         const more = overwritingFiles.length > 5 ? (' +' + (overwritingFiles.length - 5) + ' more') : '';
-        confirmMessage = 'Are you sure you want to continue with the output overwrites as detailed below?\\n\\n' + fileMessages + more;
+        const overwriteChoice = prompt(
+          'Potential output overwrite detected for ' + overwritingFiles.length + ' selected file(s).\\n\\n' +
+          fileMessages + more + '\\n\\n' +
+          'Type O to overwrite existing outputs in place.\\n' +
+          'Type T to preserve existing outputs and save new outputs with a timestamp suffix.\\n' +
+          'Type C to cancel.',
+          'T'
+        );
+
+        if (overwriteChoice === null) return;
+        const normalizedChoice = String(overwriteChoice).trim().toLowerCase();
+        if (normalizedChoice === 'c' || normalizedChoice === 'cancel') return;
+        if (normalizedChoice === 't' || normalizedChoice === 'timestamp') {
+          overwriteBehavior = 'timestamp';
+          confirmMessage = 'Start processing ' + fileCount + ' PDF(s) with timestamp-suffixed outputs for overwrite cases?';
+        } else if (normalizedChoice === 'o' || normalizedChoice === 'overwrite' || normalizedChoice === '') {
+          overwriteBehavior = 'overwrite';
+          confirmMessage = 'Proceed with overwriting existing outputs for selected files?';
+        } else {
+          alert('Invalid choice. Enter O (overwrite), T (timestamp preserve), or C (cancel).');
+          return;
+        }
       }
 
       if (!confirm(confirmMessage)) return;
@@ -4661,7 +4749,7 @@ function generateDashboardHTML(inputFiles, processing) {
       fetch('/api/start-processing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ formats: formats, selectedFiles: selectedFiles })
+        body: JSON.stringify({ formats: formats, selectedFiles: selectedFiles, overwriteBehavior: overwriteBehavior })
       })
         .then(r => r.json())
         .then(data => {
@@ -5024,12 +5112,60 @@ function hasOutputDocuments(outputBaseDir) {
   });
 }
 
+function isHighlightedHtmlFile(fileName) {
+  return /_highlighted(?:_\d{8}_\d{6})?\.html$/i.test(fileName);
+}
+
+function isCanvasHtmlFile(fileName) {
+  return /_canvas(?:_\d{8}_\d{6})?\.html$/i.test(fileName);
+}
+
+function isEditedTextFile(fileName) {
+  return /_edited(?:_\d{8}_\d{6})?\.txt$/i.test(fileName);
+}
+
+function isH5PContentFile(fileName) {
+  return /_content(?:_\d{8}_\d{6})?\.json$/i.test(fileName);
+}
+
+function isImageOutputDirectoryName(name) {
+  return /^images(?:_\d{8}_\d{6})?$/i.test(name);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractOutputSuffix(name) {
+  const match = String(name || '').match(/_(\d{8}_\d{6})(?=(?:\.[^.]+)?$)/);
+  return match ? `_${match[1]}` : '';
+}
+
+function sortVersionSuffixes(suffixes = []) {
+  return [...suffixes].sort((a, b) => {
+    if (!a && b) return -1;
+    if (a && !b) return 1;
+    if (!a && !b) return 0;
+    return a > b ? -1 : a < b ? 1 : 0;
+  });
+}
+
+function getVersionLabelForSuffix(suffix) {
+  if (!suffix) return 'Base Version';
+  const normalized = String(suffix).replace(/^_/, '');
+  const match = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return `Version ${normalized}`;
+  const [, year, month, day, hour, minute, second] = match;
+  return `Version ${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
 /**
  * Generates HTML menu page for converted PDFs
  * @param {string} outputBaseDir - Base output directory
+ * @param {string|null} focusDocKey - Optional output directory name to show only one PDF
  * @returns {string} HTML content
  */
-function generateMenuHTML(outputBaseDir) {
+function generateMenuHTML(outputBaseDir, focusDocKey = null) {
   const menuItems = [];
   const inputDir = './input';
   const inputFiles = fs.existsSync(inputDir)
@@ -5043,21 +5179,107 @@ function generateMenuHTML(outputBaseDir) {
     });
     
     subdirs.forEach(dirName => {
+      if (focusDocKey && dirName !== focusDocKey) {
+        return;
+      }
       const dirPath = path.join(outputBaseDir, dirName);
       const files = fs.readdirSync(dirPath);
-      
-      const outputs = {
-        html: files.find(f => f.endsWith('.html') && !f.endsWith('_canvas.html') && !f.endsWith('_highlighted.html')),
-        highlighted: files.find(f => f.endsWith('_highlighted.html')),
-        canvas: files.find(f => f.endsWith('_canvas.html')),
-        txt: files.find(f => f.endsWith('.txt') && !f.endsWith('_edited.txt')),
-        editedTxt: files.find(f => f.endsWith('_edited.txt')),
-        csv: files.find(f => f.endsWith('.csv')),
-        h5p: files.find(f => f.endsWith('_content.json')),
-        images: fs.existsSync(path.join(dirPath, 'images'))
+
+      const baseNamePattern = escapeRegExp(dirName);
+      const versionMap = new Map();
+      const ensureVersion = suffix => {
+        const key = suffix || '';
+        if (!versionMap.has(key)) {
+          versionMap.set(key, {
+            suffix: key,
+            outputs: {
+              html: null,
+              highlighted: null,
+              canvas: null,
+              txt: null,
+              editedTxt: null,
+              csv: null,
+              h5p: null,
+              imagesDir: null,
+            },
+          });
+        }
+        return versionMap.get(key);
       };
-      
-      menuItems.push({ dirName, outputs });
+
+      files.forEach(fileName => {
+        const fullPath = path.join(dirPath, fileName);
+        const exists = fs.existsSync(fullPath);
+        if (!exists) return;
+
+        const stat = fs.statSync(fullPath);
+
+        if (stat.isDirectory()) {
+          if (isImageOutputDirectoryName(fileName)) {
+            const suffixMatch = fileName.match(/^images(_\d{8}_\d{6})?$/i);
+            const suffix = suffixMatch && suffixMatch[1] ? suffixMatch[1] : '';
+            ensureVersion(suffix).outputs.imagesDir = fileName;
+          }
+          return;
+        }
+
+        if (!stat.isFile()) return;
+
+        const suffix = extractOutputSuffix(fileName);
+        const version = ensureVersion(suffix);
+
+        const interactivePattern = new RegExp(`^${baseNamePattern}(?:_\\d{8}_\\d{6})?\\.html$`, 'i');
+        const textPattern = new RegExp(`^${baseNamePattern}(?:_\\d{8}_\\d{6})?\\.txt$`, 'i');
+        const editedTextPattern = new RegExp(`^${baseNamePattern}(?:_\\d{8}_\\d{6})?_edited\\.txt$`, 'i');
+        const csvPattern = new RegExp(`^${baseNamePattern}(?:_\\d{8}_\\d{6})?\\.csv$`, 'i');
+        const h5pPattern = new RegExp(`^${baseNamePattern}(?:_\\d{8}_\\d{6})?_content\\.json$`, 'i');
+
+        if (!version.outputs.highlighted && isHighlightedHtmlFile(fileName)) {
+          version.outputs.highlighted = fileName;
+          return;
+        }
+        if (!version.outputs.canvas && isCanvasHtmlFile(fileName)) {
+          version.outputs.canvas = fileName;
+          return;
+        }
+        if (!version.outputs.editedTxt && editedTextPattern.test(fileName) && isEditedTextFile(fileName)) {
+          version.outputs.editedTxt = fileName;
+          return;
+        }
+        if (!version.outputs.h5p && h5pPattern.test(fileName) && isH5PContentFile(fileName)) {
+          version.outputs.h5p = fileName;
+          return;
+        }
+        if (!version.outputs.html && interactivePattern.test(fileName) && fileName.toLowerCase().endsWith('.html') && !isCanvasHtmlFile(fileName) && !isHighlightedHtmlFile(fileName)) {
+          version.outputs.html = fileName;
+          return;
+        }
+        if (!version.outputs.txt && textPattern.test(fileName) && fileName.toLowerCase().endsWith('.txt') && !isEditedTextFile(fileName)) {
+          version.outputs.txt = fileName;
+          return;
+        }
+        if (!version.outputs.csv && csvPattern.test(fileName) && fileName.toLowerCase().endsWith('.csv')) {
+          version.outputs.csv = fileName;
+        }
+      });
+
+      const versions = sortVersionSuffixes(Array.from(versionMap.keys()))
+        .map(suffix => {
+          const version = versionMap.get(suffix);
+          const outputs = version.outputs;
+          const hasAnyOutput = Object.values(outputs).some(Boolean);
+          if (!hasAnyOutput) return null;
+          return {
+            suffix,
+            label: getVersionLabelForSuffix(suffix),
+            outputs,
+          };
+        })
+        .filter(Boolean);
+
+      if (versions.length > 0) {
+        menuItems.push({ dirName, versions });
+      }
     });
   }
   
@@ -5112,6 +5334,18 @@ function generateMenuHTML(outputBaseDir) {
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 10px;
       margin-top: 15px;
+    }
+    .output-version {
+      border: 1px solid #2a313c;
+      background: #0f141b;
+      padding: 12px;
+      margin-top: 12px;
+    }
+    .output-version-title {
+      color: #8fb8ff;
+      font-size: 0.9em;
+      margin-bottom: 8px;
+      letter-spacing: 0.01em;
     }
     .output-link {
       display: block;
@@ -5338,20 +5572,6 @@ function generateMenuHTML(outputBaseDir) {
 </head>
 <body>
   <div class="container">
-    <div class="server-info">
-      Output Directory: ./output | Server: http://localhost:3000
-    </div>
-    ${inputFiles.length === 0 ? `
-    <div class="input-empty-warning">
-      <strong>No files were found in <code>input/</code>.</strong><br>
-      You must add one or more PDF files to <code>input/</code> to continue processing new documents.
-    </div>` : ''}
-    <div class="upload-panel">
-      <p>Select PDF files from this machine to copy them into <code>input/</code>.</p>
-      <input id="menuUploadPicker" type="file" accept=".pdf,application/pdf" multiple style="display:none" onchange="uploadInputFiles(this, 'menuUploadStatus', true)">
-      <button type="button" data-upload-target="menuUploadPicker" onclick="openUploadDialog('menuUploadPicker', 'menuUploadStatus')">Upload PDFs to input/</button>
-      <div id="menuUploadStatus" class="upload-status" role="status" aria-live="polite"></div>
-    </div>
     <h1>PDF Converter Output</h1>
     <div class="app-version-row">
       <div class="app-version">Version v${APP_VERSION}</div>
@@ -5377,20 +5597,26 @@ function generateMenuHTML(outputBaseDir) {
     </div>
     ${menuItems.length === 0 ? `
     <div class="no-pdfs">
-      <p><strong>No converted output found yet.</strong></p>
-      <p>You must add some files to the <code>input/</code> folder to continue, then run processing from the dashboard.</p>
+      <p><strong>${focusDocKey ? 'No converted output found for ' + focusDocKey + '.' : 'No converted output found yet.'}</strong></p>
+      <p>${focusDocKey ? 'Run processing for this PDF to generate outputs, then refresh this page.' : 'You must add some files to the <code>input/</code> folder to continue, then run processing from the dashboard.'}</p>
       <p style="margin-top: 10px; color: #8b949e;">Tip: after adding files, refresh this page and click <em>Start Processing</em>.</p>
     </div>` : menuItems.map(item => `
     <div class="pdf-card">
       <h2 class="pdf-title">${item.dirName}</h2>
-      <div class="outputs-grid">
-        ${item.outputs.html ? `<a href="/output/${item.dirName}/${item.outputs.html}" class="output-link" target="_blank">interactive.html</a>` : ''}
-        ${item.outputs.highlighted ? `<a href="/output/${item.dirName}/${item.outputs.highlighted}" class="output-link" target="_blank">highlighted.html</a>` : ''}
-        ${item.outputs.canvas ? `<div class="canvas-item"><a href="/output/${item.dirName}/${item.outputs.canvas}" class="output-link secondary" target="_blank">canvas.html</a><button class="copy-btn" onclick="copyCanvasHTML(event, '/output/${item.dirName}/${item.outputs.canvas}')">copy HTML</button></div>` : ''}
-        ${item.outputs.txt ? `<a href="/output/${item.dirName}/${item.outputs.txt}" class="output-link tertiary" target="_blank">text.txt</a>` : ''}
-        ${item.outputs.editedTxt ? `<a href="/output/${item.dirName}/${item.outputs.editedTxt}" class="output-link tertiary" target="_blank">edited.txt</a>` : ''}
-        ${item.outputs.images ? `<a href="/output/${item.dirName}/images/" class="output-link" target="_blank">images/</a>` : ''}
-      </div>
+      ${item.versions.map(version => `
+      <div class="output-version">
+        <div class="output-version-title">${version.label}</div>
+        <div class="outputs-grid">
+          ${version.outputs.html ? `<a href="/output/${item.dirName}/${version.outputs.html}" class="output-link" target="_blank">interactive.html</a>` : ''}
+          ${version.outputs.highlighted ? `<a href="/output/${item.dirName}/${version.outputs.highlighted}" class="output-link" target="_blank">highlighted.html</a>` : ''}
+          ${version.outputs.canvas ? `<div class="canvas-item"><a href="/output/${item.dirName}/${version.outputs.canvas}" class="output-link secondary" target="_blank">canvas.html</a><button class="copy-btn" onclick="copyCanvasHTML(event, '/output/${item.dirName}/${version.outputs.canvas}')">copy HTML</button></div>` : ''}
+          ${version.outputs.txt ? `<a href="/output/${item.dirName}/${version.outputs.txt}" class="output-link tertiary" target="_blank">text.txt</a>` : ''}
+          ${version.outputs.editedTxt ? `<a href="/output/${item.dirName}/${version.outputs.editedTxt}" class="output-link tertiary" target="_blank">edited.txt</a>` : ''}
+          ${version.outputs.csv ? `<a href="/output/${item.dirName}/${version.outputs.csv}" class="output-link tertiary" target="_blank">csv</a>` : ''}
+          ${version.outputs.h5p ? `<a href="/output/${item.dirName}/${version.outputs.h5p}" class="output-link tertiary" target="_blank">h5p_content.json</a>` : ''}
+          ${version.outputs.imagesDir ? `<a href="/output/${item.dirName}/${version.outputs.imagesDir}/" class="output-link" target="_blank">${version.outputs.imagesDir}/</a>` : ''}
+        </div>
+      </div>`).join('')}
     </div>`).join('')}
   </div>
   
@@ -5634,8 +5860,9 @@ function generateMenuHTML(outputBaseDir) {
  * @param {string} outputBaseDir - Output base directory path
  * @param {Object} formats - Format selection options
  * @param {Array|null} selectedFiles - Optional list of selected PDF filenames
+ * @param {Object} processingOptions - Optional run-level processing options
  */
-async function processPDFsAsync(inputDir, outputBaseDir, formats = {}, selectedFiles = null) {
+async function processPDFsAsync(inputDir, outputBaseDir, formats = {}, selectedFiles = null, processingOptions = {}) {
   try {
     shouldCancel = false;
     progressState = {
@@ -5696,7 +5923,7 @@ async function processPDFsAsync(inputDir, outputBaseDir, formats = {}, selectedF
         fs.mkdirSync(outputSubDir, { recursive: true });
       }
 
-      const success = await processPDF(pdfPath, outputSubDir, formats);
+      const success = await processPDF(pdfPath, outputSubDir, formats, processingOptions);
       if (success) {
         successCount++;
         progressState.processedFiles.push(pdfFile);
@@ -6111,13 +6338,13 @@ function startServer(outputBaseDir, port = 3000) {
 
         if (fs.existsSync(outputDir) && fs.statSync(outputDir).isDirectory()) {
           const dirFiles = fs.readdirSync(outputDir);
-          outputs.html = dirFiles.some(f => f.endsWith('.html') && !f.endsWith('_canvas.html') && !f.endsWith('_highlighted.html'));
-          outputs.highlighted = dirFiles.some(f => f.endsWith('_highlighted.html'));
-          outputs.canvas = dirFiles.some(f => f.endsWith('_canvas.html'));
-          outputs.text = dirFiles.some(f => f.endsWith('.txt') && !f.endsWith('_edited.txt'));
+          outputs.html = dirFiles.some(f => f.endsWith('.html') && !isCanvasHtmlFile(f) && !isHighlightedHtmlFile(f));
+          outputs.highlighted = dirFiles.some(f => isHighlightedHtmlFile(f));
+          outputs.canvas = dirFiles.some(f => isCanvasHtmlFile(f));
+          outputs.text = dirFiles.some(f => f.endsWith('.txt') && !isEditedTextFile(f));
           outputs.csv = dirFiles.some(f => f.endsWith('.csv'));
-          outputs.h5p = dirFiles.some(f => f.endsWith('_content.json'));
-          outputs.images = fs.existsSync(path.join(outputDir, 'images'));
+          outputs.h5p = dirFiles.some(f => isH5PContentFile(f));
+          outputs.images = dirFiles.some(name => isImageOutputDirectoryName(name) && fs.existsSync(path.join(outputDir, name)) && fs.statSync(path.join(outputDir, name)).isDirectory());
         }
 
         files[file] = outputs;
@@ -6508,6 +6735,11 @@ function startServer(outputBaseDir, port = 3000) {
           const data = body ? JSON.parse(body) : {};
           const formats = data.formats || { html: true, htmlHighlighted: true, canvas: true, text: true, csv: true, h5p: true, images: true };
           const selectedFiles = Array.isArray(data.selectedFiles) ? data.selectedFiles : null;
+          const overwriteBehavior = data.overwriteBehavior === 'timestamp' ? 'timestamp' : 'overwrite';
+          const processingOptions = {
+            preserveExistingOutputs: overwriteBehavior === 'timestamp',
+            timestampSuffix: overwriteBehavior === 'timestamp' ? formatTimestampSuffix() : '',
+          };
 
           if (selectedFiles && selectedFiles.length === 0) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -6520,7 +6752,7 @@ function startServer(outputBaseDir, port = 3000) {
           res.end(JSON.stringify({ success: true }));
           
           // Start processing asynchronously
-          processPDFsAsync(inputDir, outputBaseDir, formats, selectedFiles).finally(() => {
+          processPDFsAsync(inputDir, outputBaseDir, formats, selectedFiles, processingOptions).finally(() => {
             isProcessing = false;
             shouldCancel = false;
           });
@@ -6580,9 +6812,22 @@ function startServer(outputBaseDir, port = 3000) {
       return;
     }
 
-    if (req.url === '/menu') {
+    if (req.url === '/menu' || req.url.startsWith('/menu?')) {
+      let focusDocKey = null;
+      try {
+        const requestUrl = new URL(req.url, `http://localhost:${port}`);
+        const rawFocus = requestUrl.searchParams.get('file');
+        if (rawFocus) {
+          const normalized = path.basename(rawFocus);
+          if (normalized && normalized === rawFocus && !normalized.includes('..')) {
+            focusDocKey = normalized;
+          }
+        }
+      } catch (_err) {
+        focusDocKey = null;
+      }
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(generateMenuHTML(outputBaseDir));
+      res.end(generateMenuHTML(outputBaseDir, focusDocKey));
       return;
     }
     

@@ -1,6 +1,6 @@
 {
   "name": "@j.hughes.cu/pdf-converter",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Interactive PDF conversion dashboard with HTML editing, highlights, history, and export formats",
   "main": "index.js",
   "bin": {
